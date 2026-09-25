@@ -53,7 +53,7 @@ export default function Economics({ s }) {
               </defs>
               <CartesianGrid stroke="rgba(148,163,255,0.08)" vertical={false} />
               <XAxis dataKey="i" stroke="#6b7399" fontSize={11} tickLine={false} axisLine={false} />
-              <YAxis stroke="#6b7399" fontSize={11} tickFormatter={v => `$${v.toFixed(2)}`} tickLine={false} axisLine={false} />
+              <YAxis stroke="#6b7399" fontSize={11} tickFormatter={v => `$${v.toFixed(v < 1 ? 3 : 2)}`} tickLine={false} axisLine={false} />
               <Tooltip {...tip} formatter={v => `$${Number(v).toFixed(4)}`} labelFormatter={i => e.timeline[i - 1]?.label} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Area type="monotone" dataKey="baseline" name="Without Meko" stroke="#94a3b8" fill="url(#ab)" strokeWidth={2} />

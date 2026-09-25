@@ -1,0 +1,82 @@
+[
+  {
+    "q": "How is motor MTR-101 performing?",
+    "intent": "condition",
+    "assets": [
+      "MTR-101"
+    ]
+  },
+  {
+    "q": "Show shaft performance for the last 10 minutes",
+    "intent": "trend",
+    "types": [
+      "shaft"
+    ],
+    "window": 600
+  },
+  {
+    "q": "Which centrifugal pumps have cavitation risk?",
+    "intent": "anomalies",
+    "types": [
+      "centrifugal_pump"
+    ],
+    "metrics": [
+      "suctionPressure"
+    ]
+  },
+  {
+    "q": "Is the centrifugal compressor close to surge?",
+    "intent": "condition",
+    "types": [
+      "centrifugal_compressor"
+    ],
+    "metrics": [
+      "surgeMargin"
+    ]
+  },
+  {
+    "q": "What spare parts are low on stock?",
+    "intent": "inventory"
+  },
+  {
+    "q": "List open work orders for motors",
+    "intent": "work_orders",
+    "types": [
+      "motor"
+    ]
+  },
+  {
+    "q": "Any corrective action reports on PMP-202?",
+    "intent": "car",
+    "assets": [
+      "PMP-202"
+    ]
+  },
+  {
+    "q": "Which asset has the worst vibration?",
+    "intent": "ranking",
+    "metrics": [
+      "vibration"
+    ]
+  },
+  {
+    "q": "bearing temperature on gearbox GBX-601",
+    "intent": "condition",
+    "assets": [
+      "GBX-601"
+    ],
+    "metrics": [
+      "bearingTemp"
+    ]
+  },
+  {
+    "q": "shaft misalignment on SHF 301",
+    "intent": "condition",
+    "assets": [
+      "SHF-301"
+    ],
+    "metrics": [
+      "misalignment"
+    ]
+  }
+]

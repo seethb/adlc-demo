@@ -1,0 +1,12 @@
+# Human owners for each agent's scope (see specs/agents/roster.json).
+# Handles are placeholders — replace with your team's GitHub usernames.
+/specs/                                   @seethb
+/specs/features/*.acceptance.test.js      @seethb
+/specs/02-design/security.md              @seethb
+/edge/features/F01-iot-simulator/         @seethb
+/edge/features/F02-anomaly-detection/     @seethb
+/edge/features/F03-work-orders/           @seethb
+/edge/features/F04-corrective-action/     @seethb
+/edge/features/F05-inventory/             @seethb
+/edge/features/F06-nl-asset-query/        @seethb
+/server/adlc/guardrails.js                @seethb

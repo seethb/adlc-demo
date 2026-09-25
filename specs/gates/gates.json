@@ -1,0 +1,144 @@
+{
+  "stages": [
+    {
+      "id": "plan",
+      "label": "Plan",
+      "gate": "G1 · Spec gate",
+      "agent": "atlas",
+      "status": "adlc/spec",
+      "description": "Refine the feature spec into testable user stories; every AC is measurable."
+    },
+    {
+      "id": "design",
+      "label": "Design",
+      "gate": "G2 · Design gate",
+      "agent": "vega",
+      "status": "adlc/design",
+      "description": "Design the module against its contract; every AC maps to a design element."
+    },
+    {
+      "id": "develop",
+      "label": "Develop",
+      "gate": "G3 · Build gate",
+      "agent": "@feature",
+      "status": "adlc/build",
+      "description": "Implement the module inside the agent's path scope; static guardrails must pass."
+    },
+    {
+      "id": "test",
+      "label": "Test",
+      "gate": "G4 · Test gate",
+      "agent": "quill",
+      "status": "adlc/test",
+      "description": "Run the immutable acceptance suite and the behavioural eval against the candidate."
+    },
+    {
+      "id": "review",
+      "label": "Review",
+      "gate": "G5 · Review gate",
+      "agent": "sentinel",
+      "status": "adlc/review",
+      "description": "Security and policy review; LLM-judge score against the spec rubric."
+    },
+    {
+      "id": "deploy",
+      "label": "Deploy",
+      "gate": "G6 · Release gate",
+      "agent": "helm",
+      "status": "adlc/release",
+      "description": "All gate statuses green and a human approval, then merge and deploy to edge-staging."
+    }
+  ],
+  "guardrails": {
+    "spec-frontmatter": {
+      "severity": "block",
+      "description": "Plan keeps the feature id, owner agent and contract from the spec."
+    },
+    "acceptance-criteria-present": {
+      "severity": "block",
+      "description": "Every AC id in the spec appears in the plan."
+    },
+    "contract-conformance": {
+      "severity": "block",
+      "description": "Design names every export the contract requires."
+    },
+    "dependency-allowlist": {
+      "severity": "block",
+      "description": "Only node: built-ins and edge/reference/fleet.js may be imported."
+    },
+    "path-scope": {
+      "severity": "block",
+      "description": "An agent may only write inside its own scope in the roster."
+    },
+    "secret-scan": {
+      "severity": "block",
+      "description": "No API keys, tokens, private keys or connection strings."
+    },
+    "syntax-check": {
+      "severity": "block",
+      "description": "The module parses as an ES module."
+    },
+    "no-dynamic-exec": {
+      "severity": "block",
+      "description": "No eval, new Function, child_process or network calls in edge code."
+    },
+    "plaintext-transport": {
+      "severity": "block",
+      "description": "No mqtt://, ws://, non-localhost http://, rejectUnauthorized:false, tls:false or insecure:true — every cross-zone link is TLS with certificates (security.md §3)."
+    },
+    "ot-write-prohibited": {
+      "severity": "block",
+      "description": "Edge analytics is read-only towards OT: no Modbus/OPC-UA writes or setpoint changes (IEC 62443 zones and conduits)."
+    },
+    "tests-immutable": {
+      "severity": "block",
+      "description": "Agents cannot edit acceptance tests; only the Test agent runs them."
+    },
+    "prompt-injection": {
+      "severity": "block",
+      "description": "Memories recalled from Meko are screened for instruction-injection before they reach a prompt."
+    },
+    "memory-provenance": {
+      "severity": "warn",
+      "description": "Recalled memories must come from a roster agent or the org standards bucket."
+    },
+    "token-budget": {
+      "severity": "warn",
+      "description": "Input tokens per stage stay under the agent's budget."
+    },
+    "all-checks-green": {
+      "severity": "block",
+      "description": "Every adlc/* commit status on the PR head is success."
+    },
+    "human-approval": {
+      "severity": "block",
+      "description": "The feature's human owner (or the release manager) approves the deploy."
+    }
+  },
+  "evals": {
+    "spec-completeness": {
+      "threshold": 0.8,
+      "description": "Share of rubric items present: stories, ACs, non-goals, risks, telemetry."
+    },
+    "ac-coverage": {
+      "threshold": 1.0,
+      "description": "Share of spec ACs referenced by the design."
+    },
+    "contract-exports": {
+      "threshold": 1.0,
+      "description": "Share of required exports the module actually exports."
+    },
+    "acceptance-pass-rate": {
+      "threshold": 1.0,
+      "description": "Passing acceptance tests / total, run against the candidate only."
+    },
+    "behavioural": {
+      "threshold": 1.0,
+      "description": "Feature-specific: F02 precision ≥ 0.9 and recall ≥ 0.9 on a labelled simulation; F06 golden-set intent accuracy = 1.0; others: scenario replay."
+    },
+    "llm-judge": {
+      "threshold": 0.7,
+      "description": "Reviewer model scores the change against the spec rubric (0–1)."
+    }
+  }
+}

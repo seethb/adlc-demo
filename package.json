@@ -1,0 +1,35 @@
+{
+  "name": "adlc-demo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Spec-driven Agentic Development Lifecycle (ADLC) for an IoT edge analytics app — 10 agents sharing one Meko datapack, gated through live GitHub",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,ui -c magenta,cyan \"node --watch-path=server --watch-path=edge server/index.js\" \"vite\"",
+    "build": "vite build",
+    "start": "vite build && node server/index.js",
+    "serve": "node server/index.js",
+    "setup": "node server/setup.js",
+    "test": "node --test test/ specs/features/",
+    "test:acceptance": "node --test specs/features/",
+    "spec:lint": "node scripts/spec-lint.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.15.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "vite": "^5.4.11"
+  }
+}

@@ -1,0 +1,48 @@
+name: adlc-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  spec-and-tests:
+    name: Spec lint · acceptance · guardrails · behavioural evals
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Spec lint (every AC traced to an executable test)
+        run: npm run spec:lint
+      - name: Acceptance + guardrail unit tests (reference and agent-built modules)
+        run: npm test
+      - name: Behavioural evals
+        run: |
+          for spec in specs/features/F0*.spec.md; do
+            id=$(grep -m1 '^id:' "$spec" | awk '{print $2}')
+            mod=$(grep -m1 '^module:' "$spec" | awk '{print $2}')
+            ref=$(grep -m1 '^reference:' "$spec" | awk '{print $2}')
+            for impl in "$ref" "$mod"; do
+              [ -f "$impl" ] || continue
+              out=$(node scripts/behavioural.js "$id" "$impl")
+              echo "$id $impl → $out"
+              echo "$out" | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); process.exit(r.score>=1?0:1)"
+            done
+          done
+      - name: Secret scan
+        run: |
+          if grep -rEn --exclude-dir=node_modules --exclude-dir=.git --exclude=guardrails.test.js --exclude=guardrails.js "sk-ant-[A-Za-z0-9_-]{10,}|mko_tkn_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----" .; then
+            echo "::error::secret-like material found"; exit 1
+          fi
+      - name: Edge security (plaintext transport / OT writes)
+        run: |
+          if [ -d edge/features ] && grep -rEn "mqtt://|ws://|rejectUnauthorized: *false|write(Single|Multiple)?(Register|Coil)" edge/; then
+            echo "::error::insecure transport or OT write path in edge code"; exit 1
+          fi

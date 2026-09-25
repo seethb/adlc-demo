@@ -1,0 +1,301 @@
+{
+  "datapack": "iot-edge-adlc",
+  "note": "Ten team members, each paired with one agent. Every agent reads and writes the same Meko datapack under its own agent_id, so decisions made by one are recalled by the others instead of being re-derived from the full corpus.",
+  "agents": [
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "role": "Product & Spec Agent",
+      "owner": "Priya",
+      "ownerRole": "Product owner",
+      "stages": [
+        "plan"
+      ],
+      "features": [
+        "*"
+      ],
+      "color": "#8b5cf6",
+      "icon": "compass",
+      "scope": [
+        "specs/features/*/plan.md"
+      ],
+      "guardrails": [
+        "spec-frontmatter",
+        "acceptance-criteria-present",
+        "token-budget",
+        "memory-provenance"
+      ],
+      "evals": {
+        "spec-completeness": 0.8
+      },
+      "tokenBudget": 6000
+    },
+    {
+      "id": "vega",
+      "name": "Vega",
+      "role": "Solution Architect Agent",
+      "owner": "Marcus",
+      "ownerRole": "Architect",
+      "stages": [
+        "design"
+      ],
+      "features": [
+        "*"
+      ],
+      "color": "#06b6d4",
+      "icon": "drafting-compass",
+      "scope": [
+        "specs/features/*/design.md"
+      ],
+      "guardrails": [
+        "contract-conformance",
+        "dependency-allowlist",
+        "plaintext-transport",
+        "token-budget",
+        "memory-provenance"
+      ],
+      "evals": {
+        "ac-coverage": 1.0
+      },
+      "tokenBudget": 8000
+    },
+    {
+      "id": "orion",
+      "name": "Orion",
+      "role": "Telemetry Engineer",
+      "owner": "Elena",
+      "ownerRole": "IoT engineer",
+      "stages": [
+        "develop"
+      ],
+      "features": [
+        "F01"
+      ],
+      "color": "#22c55e",
+      "icon": "radio-tower",
+      "scope": [
+        "edge/features/F01-iot-simulator/**"
+      ],
+      "guardrails": [
+        "path-scope",
+        "secret-scan",
+        "dependency-allowlist",
+        "syntax-check",
+        "no-dynamic-exec",
+        "plaintext-transport",
+        "ot-write-prohibited",
+        "token-budget"
+      ],
+      "evals": {
+        "contract-exports": 1.0
+      },
+      "tokenBudget": 12000
+    },
+    {
+      "id": "lyra",
+      "name": "Lyra",
+      "role": "Analytics Engineer",
+      "owner": "Kenji",
+      "ownerRole": "Data scientist",
+      "stages": [
+        "develop"
+      ],
+      "features": [
+        "F02"
+      ],
+      "color": "#f43f5e",
+      "icon": "activity",
+      "scope": [
+        "edge/features/F02-anomaly-detection/**"
+      ],
+      "guardrails": [
+        "path-scope",
+        "secret-scan",
+        "dependency-allowlist",
+        "syntax-check",
+        "no-dynamic-exec",
+        "plaintext-transport",
+        "ot-write-prohibited",
+        "token-budget"
+      ],
+      "evals": {
+        "contract-exports": 1.0
+      },
+      "tokenBudget": 12000
+    },
+    {
+      "id": "nova",
+      "name": "Nova",
+      "role": "Maintenance Automation Engineer",
+      "owner": "Amara",
+      "ownerRole": "Reliability engineer",
+      "stages": [
+        "develop"
+      ],
+      "features": [
+        "F03",
+        "F04"
+      ],
+      "color": "#f59e0b",
+      "icon": "wrench",
+      "scope": [
+        "edge/features/F03-work-orders/**",
+        "edge/features/F04-corrective-action/**"
+      ],
+      "guardrails": [
+        "path-scope",
+        "secret-scan",
+        "dependency-allowlist",
+        "syntax-check",
+        "no-dynamic-exec",
+        "plaintext-transport",
+        "ot-write-prohibited",
+        "token-budget"
+      ],
+      "evals": {
+        "contract-exports": 1.0
+      },
+      "tokenBudget": 12000
+    },
+    {
+      "id": "rigel",
+      "name": "Rigel",
+      "role": "Supply Chain Engineer",
+      "owner": "Sofia",
+      "ownerRole": "MRO planner",
+      "stages": [
+        "develop"
+      ],
+      "features": [
+        "F05"
+      ],
+      "color": "#3b82f6",
+      "icon": "package",
+      "scope": [
+        "edge/features/F05-inventory/**"
+      ],
+      "guardrails": [
+        "path-scope",
+        "secret-scan",
+        "dependency-allowlist",
+        "syntax-check",
+        "no-dynamic-exec",
+        "plaintext-transport",
+        "ot-write-prohibited",
+        "token-budget"
+      ],
+      "evals": {
+        "contract-exports": 1.0
+      },
+      "tokenBudget": 12000
+    },
+    {
+      "id": "sage",
+      "name": "Sage",
+      "role": "Conversational AI Engineer",
+      "owner": "Liam",
+      "ownerRole": "NLP engineer",
+      "stages": [
+        "develop"
+      ],
+      "features": [
+        "F06"
+      ],
+      "color": "#14b8a6",
+      "icon": "message-square-text",
+      "scope": [
+        "edge/features/F06-nl-asset-query/**"
+      ],
+      "guardrails": [
+        "path-scope",
+        "secret-scan",
+        "dependency-allowlist",
+        "syntax-check",
+        "no-dynamic-exec",
+        "plaintext-transport",
+        "ot-write-prohibited",
+        "token-budget"
+      ],
+      "evals": {
+        "contract-exports": 1.0
+      },
+      "tokenBudget": 12000
+    },
+    {
+      "id": "quill",
+      "name": "Quill",
+      "role": "QA & Evaluation Agent",
+      "owner": "Noor",
+      "ownerRole": "QA lead",
+      "stages": [
+        "test"
+      ],
+      "features": [
+        "*"
+      ],
+      "color": "#a3e635",
+      "icon": "flask-conical",
+      "scope": [
+        "specs/features/*.acceptance.test.js"
+      ],
+      "guardrails": [
+        "tests-immutable"
+      ],
+      "evals": {
+        "acceptance-pass-rate": 1.0,
+        "behavioural": 1.0
+      },
+      "tokenBudget": 4000
+    },
+    {
+      "id": "sentinel",
+      "name": "Sentinel",
+      "role": "Security & Guardrail Reviewer",
+      "owner": "Theo",
+      "ownerRole": "AppSec engineer",
+      "stages": [
+        "review"
+      ],
+      "features": [
+        "*"
+      ],
+      "color": "#ef4444",
+      "icon": "shield-check",
+      "scope": [],
+      "guardrails": [
+        "secret-scan",
+        "plaintext-transport",
+        "ot-write-prohibited",
+        "prompt-injection",
+        "memory-provenance",
+        "token-budget"
+      ],
+      "evals": {
+        "llm-judge": 0.7
+      },
+      "tokenBudget": 8000
+    },
+    {
+      "id": "helm",
+      "name": "Helm",
+      "role": "Release & Deploy Agent",
+      "owner": "Grace",
+      "ownerRole": "Platform engineer",
+      "stages": [
+        "deploy"
+      ],
+      "features": [
+        "*"
+      ],
+      "color": "#e879f9",
+      "icon": "rocket",
+      "scope": [],
+      "guardrails": [
+        "all-checks-green",
+        "human-approval"
+      ],
+      "evals": {},
+      "tokenBudget": 1000
+    }
+  ]
+}

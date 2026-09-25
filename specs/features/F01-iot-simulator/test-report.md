@@ -1,6 +1,6 @@
 # F01 test report
 
-Run f01-mugs5469 · 2026-09-25T09:52:29.016Z
+Run f01-mugs96pt · 2026-09-25T09:53:55.854Z
 
 | | Acceptance criterion | Result |
 |---|---|---|

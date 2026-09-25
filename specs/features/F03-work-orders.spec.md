@@ -32,6 +32,19 @@ WO = { id: 'WO-1001', assetId, assetType, failureMode, priority: P1..P3, slaHour
        createdAt, lastSeen, history[], deduplicated }
 ```
 
+### Inventory interface used (from F05 — do not guess)
+The service receives an F05 inventory instance and uses exactly these calls, with the
+**work-order id as the reservation reference**:
+
+| When | Call | Notes |
+|---|---|---|
+| WO raised | `inventory.reserve(sku, qty, woId)` for each playbook part | returns `{ ok, reserved, shortfall }`; store `reserved` and `shortfall` on the WO part |
+| WO closed | `inventory.consume(woId)` | issues every part reserved under `woId`: on-hand and reserved both drop |
+| WO cancelled | `inventory.release(woId)` | returns reservations to stock |
+
+There is no `consume(sku, qty)` — consumption is always by reference. `inventory` may be
+omitted (tests pass one); when absent, treat every part as fully reserved.
+
 ## Acceptance criteria
 - **AC-F03-1** critical → P1, high → P2, medium → P3; low severity raises no WO.
 - **AC-F03-2** At most one open WO per asset + failure mode; repeats increment `occurrences`, and a more severe repeat escalates priority.

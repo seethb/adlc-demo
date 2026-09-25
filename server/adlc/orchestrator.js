@@ -100,10 +100,21 @@ async function cachedArtifact(agent, f, stage, upstreamHash) {
 const fmtMemory = m => `- [${m.agent_id ?? 'unknown'}${m.metadata?.kind ? ` · ${m.metadata.kind}` : ''}${m.metadata?.feature && m.metadata.feature !== '*' ? ` · ${m.metadata.feature}/${m.metadata.stage}` : ''}] ${m.memory}`;
 const fmtKb = k => `- (${k.document_name ?? k.filename ?? k.source ?? 'kb'}) ${String(k.chunk_text ?? k.text ?? k.content ?? '').replace(/\s+/g, ' ').slice(0, 700)}`;
 
+// The Contract section of each dependency's spec — the interfaces this
+// feature must call exactly (e.g. F03 uses F05's reserve/consume by WO id).
+function dependencyContracts(f) {
+  return f.depends.map(getFeature).filter(Boolean).map(d => {
+    const m = d.spec.match(/## Contract\n([\s\S]*?)(?=\n## (?!#))/);
+    return m ? `## ${d.id} ${d.title} — contract (exports: ${d.exports.join(', ')})\n${m[1].trim()}` : null;
+  }).filter(Boolean).join('\n\n');
+}
+
 function mekoPrompt(taskText, f, ctx, upstream) {
+  const deps = dependencyContracts(f);
   return [
     `# Task\n${taskText}`,
     `# Feature spec (source of truth)\n${f.spec}`,
+    deps ? `# Contracts of the features this one depends on — call them exactly as specified\n${deps}` : '',
     ctx.memories.length ? `# Shared team memory recalled from Meko (datapack iot-edge-adlc)\n${ctx.memories.map(fmtMemory).join('\n')}` : '',
     ctx.kb.length ? `# Knowledge recalled from Meko\n${ctx.kb.map(fmtKb).join('\n')}` : '',
     upstream ? `# Upstream artifact\n${upstream}` : '',

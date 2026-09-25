@@ -37,6 +37,8 @@ let ghSnap = null, ghError = null;
 async function refreshGithub() {
   try { ghSnap = await gh.snapshot(); ghError = null; emit('github-snapshot', ghSnap); }
   catch (e) { ghError = e.message; }
+  // Parked releases are checked against the real PR state on every refresh.
+  orch.reconcile().catch(() => {});
 }
 setInterval(refreshGithub, 20000);
 refreshGithub();

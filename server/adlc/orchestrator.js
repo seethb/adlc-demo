@@ -428,6 +428,12 @@ async function stageReview(run, f) {
 async function stageDeploy(run, f) {
   const agent = stageAgent('deploy', f);
   await setStageLabel(run, 'deploy');
+  const prNow = await gh.api('GET', `/repos/{repo}/pulls/${run.pr}`);
+  if (prNow.state === 'closed' && !prNow.merged) {
+    const gate = { pass: false, guardrails: [{ id: 'all-checks-green', pass: false, severity: 'block', detail: `PR #${run.pr} was closed on GitHub without merging — Retry reopens it` }], evals: [] };
+    event(run, 'deploy', `PR #${run.pr} is closed on GitHub without a merge — release blocked`, 'error');
+    return { gate };
+  }
   let approval = preApproved.get(run.id) ?? null;
   preApproved.delete(run.id);
   if (approval) { /* approved while the server was restarting */ }
@@ -512,7 +518,11 @@ export function createRun(featureId, { from = 'plan', parent } = {}) {
     stages: Object.fromEntries(STAGES.map(s => [s, prev && STAGES.indexOf(s) < STAGES.indexOf(from) ? { ...prev.stages[s] } : { status: 'pending', agent: stageAgent(s, f)?.id }])),
     log: [], from,
   };
-  if (prev) { prev.status = 'superseded'; save(prev); }
+  if (prev) {
+    prev.status = 'superseded';
+    if (prev.stages.deploy?.status === 'awaiting_approval') prev.stages.deploy.status = 'superseded';
+    save(prev);
+  }
   save(run);
   return run;
 }
@@ -566,6 +576,9 @@ export function retry(runId, from) {
   const firstOpen = STAGES.find(st => !['passed'].includes(prev.stages[st]?.status));
   const stage = from ?? (prev.failedStage === 'test' || prev.failedStage === 'review' ? 'develop' : prev.failedStage ?? firstOpen ?? 'plan');
   const run = createRun(prev.feature, { from: stage, parent: runId });
+  if (run.pr) gh.api('GET', `/repos/{repo}/pulls/${run.pr}`).then(pr => {
+    if (pr.state === 'closed' && !pr.merged) return gh.updatePR(run.pr, { state: 'open' }).then(() => event(run, stage, `Reopened PR #${run.pr} on GitHub for this retry`));
+  }).catch(() => {});
   // Send the gate's findings back to the developer as the lessons to fix.
   const lessons = prev.failedStage === 'review'
     ? (prev.stages.review?.judge?.findings ?? []).map(x => `Review finding (${x.severity}) — ${x.title}: ${x.detail}`)
@@ -627,6 +640,39 @@ export function resumeInterrupted() {
     resumed.push(retry(r.id, from).id);
   }
   return resumed;
+}
+
+// Keep parked releases honest with GitHub: superseded runs stop asking,
+// PRs merged by a human are recorded as released, and PRs closed without a
+// merge fail the release gate with that reason.
+export async function reconcile() {
+  const changed = [];
+  for (const r of Object.values(state.runs)) {
+    if (r.stages?.deploy?.status !== 'awaiting_approval') continue;
+    if (r.status === 'superseded') { r.stages.deploy.status = 'superseded'; save(r); changed.push(r.id); continue; }
+    if (!r.pr) continue;
+    let pr;
+    try { pr = await gh.api('GET', `/repos/{repo}/pulls/${r.pr}`); } catch { continue; }
+    const live = approvals.get(r.id);
+    if (pr.merged) {
+      if (state.deployments[r.feature]?.pr === r.pr && !live) {
+        Object.assign(r.stages.deploy, { status: 'passed', approval: { by: 'merged on GitHub', at: pr.merged_at } });
+        r.status = 'deployed';
+        event(r, 'deploy', `PR #${r.pr} was merged on GitHub and ${r.feature} is already released — nothing left to approve`, 'success');
+      } else approve(r.id, { by: 'merged on GitHub by the repo owner' });
+      changed.push(r.id);
+    } else if (pr.state === 'closed') {
+      const note = `PR #${r.pr} was closed on GitHub without merging — release blocked. Retry reopens the PR.`;
+      if (live) live({ by: 'GitHub', rejected: true, note, at: new Date().toISOString() });
+      else {
+        Object.assign(r.stages.deploy, { status: 'failed', error: note });
+        r.status = 'failed'; r.failedStage = 'deploy';
+        event(r, 'deploy', note, 'error');
+      }
+      changed.push(r.id);
+    }
+  }
+  return changed;
 }
 
 export const isActive = id => active.has(id);

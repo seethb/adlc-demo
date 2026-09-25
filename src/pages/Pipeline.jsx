@@ -13,7 +13,8 @@ export default function Pipeline({ s, go }) {
   const settings = s.settings ?? {};
   const setSetting = patch => api('/settings', { method: 'PATCH', body: patch });
   const gateOf = id => s.gates.stages.find(g => g.id === id);
-  const waiting = s.runs.filter(r => r.stages?.deploy?.status === 'awaiting_approval');
+  // Only the latest run of a feature can be released; older parked runs are history.
+  const waiting = s.features.map(f => latestRun(s, f.id)).filter(r => r && r.stages?.deploy?.status === 'awaiting_approval');
   const active = s.runs.filter(r => r.status === 'running');
   const logRun = active[0] ?? s.runs[0];
 

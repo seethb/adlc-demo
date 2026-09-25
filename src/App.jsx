@@ -58,7 +58,7 @@ export default function App() {
   }, [s.toasts, dispatch]);
 
   const running = s.runs.filter(r => r.status === 'running').length;
-  const approvals = s.runs.filter(r => r.stages?.deploy?.status === 'awaiting_approval').length;
+  const approvals = (s.features ?? []).filter(f => s.runs.find(r => r.feature === f.id && r.status !== 'superseded')?.stages?.deploy?.status === 'awaiting_approval').length;
   const current = PAGES.find(p => p.id === page) ?? PAGES[0];
   const props = { s, dispatch, go };
 

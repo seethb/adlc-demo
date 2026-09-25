@@ -453,7 +453,10 @@ async function stageDeploy(run, f) {
   }
   await publishStatus(run, 'adlc/release', 'success', `G6 passed · approved by ${approval.by}`, agent);
   await gh.comment(run.pr, gateComment(run, 'deploy', agent, gate, null, `\nMerging with squash and deploying to **edge-staging**.\n`), agent);
-  const merged = await gh.merge(run.pr, `${f.id}: ${f.title} (#${run.pr})`, agent);
+  // A human may already have merged the PR on GitHub; then Helm just records the release.
+  const pr = await gh.api('GET', `/repos/{repo}/pulls/${run.pr}`);
+  const merged = pr.merged ? { sha: pr.merge_commit_sha } : await gh.merge(run.pr, `${f.id}: ${f.title} (#${run.pr})`, agent);
+  if (pr.merged) event(run, 'deploy', `PR #${run.pr} was already merged on GitHub (${pr.merge_commit_sha.slice(0, 7)}) — recording the release`);
   const dep = await gh.deploy(merged.sha, 'edge-staging', `${f.id} ${f.title} — shipped by ${ownerOf(f)?.name}`, agent);
   await gh.labels(run.pr, ['adlc:deployed']);
   state.deployments[f.id] = { run: run.id, pr: run.pr, prUrl: run.prUrl, sha: merged.sha, deploymentId: dep.id, at: new Date().toISOString(), agent: ownerOf(f)?.id, approvedBy: approval.by };

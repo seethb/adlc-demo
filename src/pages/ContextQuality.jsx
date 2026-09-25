@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, BarChart, Bar } from 'recharts';
 import { AlertTriangle, Zap, Play, Loader2, CheckCircle2, XCircle, HelpCircle, FlaskConical, Info } from 'lucide-react';
 import { Card, Badge, Tabs, Empty } from '../components/ui.jsx';
 import { api, post, fmt } from '../api.js';
 
 const RED = '#e5484d', CY = '#06b6d4';
-const tip = { contentStyle: { background: '#fff', border: '1px solid rgba(15,23,42,0.12)', borderRadius: 12, fontSize: 12, boxShadow: '0 8px 24px rgba(15,23,42,0.1)' } };
 
 export default function ContextQuality({ s }) {
   const [meta, setMeta] = useState(null);
@@ -50,18 +48,10 @@ export default function ContextQuality({ s }) {
 
         <Card title="Output quality vs. context size" hint={res ? `run ${fmt.dateTime(res.at)} · ${res.questions.length} questions` : 'no run yet'}>
           {res ? (
-            <ResponsiveContainer width="100%" height={330}>
-              <LineChart data={chart} margin={{ top: 10, right: 20, bottom: 18, left: 0 }}>
-                <CartesianGrid stroke="rgba(15,23,42,0.06)" vertical={false} />
-                <XAxis dataKey="x" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} label={{ value: 'CONTEXT SIZE →', position: 'insideBottom', offset: -10, fontSize: 11, fill: '#94a3b8' }} />
-                <YAxis domain={[0, 100]} stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} unit="%" />
-                <Tooltip {...tip} formatter={(v, k) => [`${v}%`, k === 'stuffing' ? 'Context stuffing' : 'Meko-engineered']} labelFormatter={(x, p) => { const d = p?.[0]?.payload; return d ? `Level ${x}: ${d.label} · ${fmt.k(d.tokens)} tokens` : x; }} />
-                <Legend formatter={v => (v === 'stuffing' ? 'Context stuffing (status quo)' : 'Meko-engineered context')} wrapperStyle={{ fontSize: 12 }} />
-                <Line isAnimationActive={false} type="monotone" dataKey="stuffing" stroke={RED} strokeWidth={3} dot={{ r: 5, fill: RED }} />
-                <Line isAnimationActive={false} type="monotone" dataKey="meko" stroke={CY} strokeWidth={3} dot={{ r: 5, fill: CY }} />
-                {peak && <ReferenceLine x={`${peak.n}`} stroke="#fda4af" strokeDasharray="4 4" label={{ value: 'stuffing peaks', fontSize: 10, fill: '#e11d48', position: 'top' }} />}
-              </LineChart>
-            </ResponsiveContainer>
+            <>
+              <QualityChart data={chart} peak={peak?.n} />
+              {res.questions.length < 4 && <div className="dim" style={{ fontSize: 12, marginTop: 6 }}>Only {res.questions.length} question{res.questions.length > 1 ? 's' : ''} in this run — each point is 0 % or 100 %. Run 6 or 12 questions for a real curve.</div>}
+            </>
           ) : <Empty icon={<FlaskConical />}>Run the benchmark below to draw this chart from real measurements.</Empty>}
         </Card>
       </div>
@@ -83,17 +73,7 @@ export default function ContextQuality({ s }) {
           )}
         </Card>
         <Card title="Cost and latency per answer" icon={<Info size={16} className="dim" />}>
-          {res ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={costChart}>
-                <CartesianGrid stroke="rgba(15,23,42,0.06)" vertical={false} />
-                <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} tickFormatter={v => `$${v.toFixed(3)}`} />
-                <Tooltip {...tip} formatter={(v, k, p) => (k === 'cost' ? [`$${Number(v).toFixed(4)} · ${fmt.k(p.payload.tokens)} tokens · ${fmt.ms(p.payload.ms)}`, 'per answer'] : v)} />
-                <Bar isAnimationActive={false} dataKey="cost" radius={[6, 6, 0, 0]} fill="#94a3b8" />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <Empty>—</Empty>}
+          {res ? <CostBars data={costChart} /> : <Empty>—</Empty>}
         </Card>
       </div>
 
@@ -142,6 +122,80 @@ function Verdict({ icon, tone, title, text, stat, highlight }) {
         <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>{text}</div>
         {stat && <div className="mono" style={{ fontSize: 12, marginTop: 8, color: tone, fontWeight: 700 }}>{stat}</div>}
       </div>
+    </div>
+  );
+}
+
+// Hand-drawn SVG chart: quality (% correct) per context level, stuffing vs Meko.
+function QualityChart({ data, peak }) {
+  const [hover, setHover] = useState(null);
+  const Wd = 720, Ht = 330, L = 52, R = 24, T = 20, B = 62;
+  const x = i => L + (i * (Wd - L - R)) / Math.max(1, data.length - 1);
+  const y = v => T + ((100 - v) * (Ht - T - B)) / 100;
+  const smooth = key => data.map((d, i) => {
+    const px = x(i), py = y(d[key]);
+    if (!i) return `M${px},${py}`;
+    const qx = x(i - 1), qy = y(data[i - 1][key]), cx = (qx + px) / 2;
+    return `C${cx},${qy} ${cx},${py} ${px},${py}`;
+  }).join(' ');
+  return (
+    <div style={{ position: 'relative' }}>
+      <div className="cq-legend">
+        <span><i style={{ background: RED }} />Context stuffing <em>status quo</em></span>
+        <span><i style={{ background: CY }} />Meko-engineered context</span>
+      </div>
+      <svg viewBox={`0 0 ${Wd} ${Ht}`} style={{ width: '100%', display: 'block' }}>
+        {[0, 20, 40, 60, 80, 100].map(v => (
+          <g key={v}>
+            <line x1={L} x2={Wd - R} y1={y(v)} y2={y(v)} stroke="#eef1f6" />
+            <text x={L - 10} y={y(v) + 4} textAnchor="end" fontSize="11" fill="#94a3b8">{v}</text>
+          </g>
+        ))}
+        {data.map((d, i) => (
+          <g key={d.x}>
+            <text x={x(i)} y={Ht - B + 20} textAnchor="middle" fontSize="12" fontWeight="700" fill="#475569">{d.x}</text>
+            <text x={x(i)} y={Ht - B + 35} textAnchor="middle" fontSize="10" fill="#94a3b8">{fmt.k(d.tokens)} tok</text>
+          </g>
+        ))}
+        <text x={(L + Wd - R) / 2} y={Ht - 6} textAnchor="middle" fontSize="10.5" letterSpacing="0.12em" fill="#94a3b8">CONTEXT SIZE →</text>
+        <text x={14} y={T + (Ht - T - B) / 2} textAnchor="middle" fontSize="10.5" fill="#94a3b8" transform={`rotate(-90 14 ${T + (Ht - T - B) / 2})`}>% CORRECT</text>
+        {peak && <line x1={x(data.findIndex(d => d.x === `${peak}`))} x2={x(data.findIndex(d => d.x === `${peak}`))} y1={T} y2={Ht - B} stroke="#fda4af" strokeDasharray="4 4" />}
+        <path d={smooth('stuffing')} fill="none" stroke={RED} strokeWidth="3.5" strokeLinecap="round" />
+        <path d={smooth('meko')} fill="none" stroke={CY} strokeWidth="3.5" strokeLinecap="round" />
+        {data.map((d, i) => (
+          <g key={`p${d.x}`}>
+            <circle cx={x(i)} cy={y(d.stuffing)} r="6" fill={RED} stroke="#fff" strokeWidth="2" />
+            <circle cx={x(i)} cy={y(d.meko)} r="6" fill={CY} stroke="#fff" strokeWidth="2" />
+            <rect x={x(i) - 24} y={T} width={48} height={Ht - T - B} fill="transparent" onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
+          </g>
+        ))}
+      </svg>
+      {hover !== null && (
+        <div className="cq-tip" style={{ left: `${(x(hover) / Wd) * 100}%` }}>
+          <b>Level {data[hover].x} · {data[hover].label}</b>
+          <span>{fmt.n(data[hover].tokens)} tokens stuffed</span>
+          <span style={{ color: RED }}>Stuffing: {data[hover].stuffing}% correct</span>
+          <span style={{ color: CY }}>Meko: {data[hover].meko}% correct</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Cost per answer by context level, as simple labelled bars.
+function CostBars({ data }) {
+  const max = Math.max(...data.map(d => d.cost), 1e-9);
+  return (
+    <div className="col" style={{ gap: 7 }}>
+      {data.map(d => (
+        <div key={d.name} className="row" style={{ gap: 10, fontSize: 12 }}>
+          <span className="mono" style={{ width: 44, color: d.name === 'Meko' ? CY : '#475569', fontWeight: 700 }}>{d.name}</span>
+          <div style={{ flex: 1, height: 14, borderRadius: 7, background: '#f1f4f9', overflow: 'hidden' }}>
+            <div style={{ width: `${Math.max(1.5, (d.cost / max) * 100)}%`, height: '100%', borderRadius: 7, background: d.name === 'Meko' ? CY : '#94a3b8' }} />
+          </div>
+          <span className="mono" style={{ width: 160, textAlign: 'right' }}>${d.cost.toFixed(4)} · {fmt.k(d.tokens)} tok · {fmt.ms(d.ms)}</span>
+        </div>
+      ))}
     </div>
   );
 }

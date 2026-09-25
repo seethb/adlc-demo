@@ -344,7 +344,11 @@ async function stageDevelop(run, f) {
   const agent = stageAgent('develop', f);
   const design = state.artifacts[f.id]?.design;
   const lessons = run.stages.test?.failures?.length ? run.stages.test.failures.join('\n') : null;
-  const tests = readText(f.testFile);
+  // The acceptance suite plus any fixture it loads (e.g. a golden set) are the
+  // executable spec; the developer sees both.
+  const suite = readText(f.testFile);
+  const fixtures = [...suite.matchAll(/new URL\(['"]\.\/([^'"]+)['"]/g)].map(m => m[1]).filter(x => !x.endsWith('.js'));
+  const tests = suite + fixtures.map(x => `\n\n// ---- fixture specs/features/${x} (loaded by the suite above) ----\n${readText(`specs/features/${x}`)}`).join('');
   let step = await agentStep(run, 'develop', f, agent, { upstream: design?.text, upstreamHash: design?.hash, code: true, maxTokens: 16000, effort: 'medium', extra: { tests, ...(lessons ? { failures: lessons } : {}) } });
   const file = workFile(run, f);
   writeFileSync(file, step.artifact);
@@ -352,12 +356,13 @@ async function stageDevelop(run, f) {
   // Self-check against the acceptance suite before committing; one repair pass.
   let pre = await acceptance(file, f);
   event(run, 'develop', `${agent.name} self-check: ${pre.passed}/${pre.total} acceptance tests pass`);
-  if (pre.rate < 1 && claude.enabled()) {
-    event(run, 'develop', `${agent.name} is repairing ${pre.total - pre.passed} failing test(s)`, 'warn');
+  // Up to two repair passes, each fed the exact failing assertions.
+  for (let attempt = 1; attempt <= 2 && pre.rate < 1 && claude.enabled(); attempt++) {
+    event(run, 'develop', `${agent.name} is repairing ${pre.total - pre.passed} failing test(s) — pass ${attempt} of 2`, 'warn');
     const repair = await agentStep(run, 'develop', f, agent, { upstream: `${design?.text ?? ''}\n\n# Your previous module\n${step.artifact}`, code: true, maxTokens: 16000, effort: 'medium', extra: { tests, failures: pre.failures.join('\n') || 'see acceptance criteria' }, allowCache: false });
     writeFileSync(file, repair.artifact);
     const again = await acceptance(file, f);
-    event(run, 'develop', `${agent.name} after repair: ${again.passed}/${again.total} acceptance tests pass`);
+    event(run, 'develop', `${agent.name} after repair ${attempt}: ${again.passed}/${again.total} acceptance tests pass`);
     if (again.rate >= pre.rate) { step = { ...repair, decisions: [...step.decisions, ...repair.decisions].slice(0, 5) }; pre = again; } else writeFileSync(file, step.artifact);
   }
 

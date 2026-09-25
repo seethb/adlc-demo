@@ -40,6 +40,7 @@ function reducer(s, a) {
     case 'sprint': return { ...s, sprint: a.data };
     case 'privacy': return { ...s, privacy: a.data.stats };
     case 'bench': return { ...s, bench: a.data };
+    case 'reval': return { ...s, reval: a.data };
     case 'toast': return { ...s, toasts: [...s.toasts, { id: Math.random(), ...a.data }].slice(-5) };
     case 'untoast': return { ...s, toasts: s.toasts.filter(t => t.id !== a.id) };
     default: return s;
@@ -77,6 +78,7 @@ export function useLive() {
       on('sprint', d => dispatch({ type: 'sprint', data: d }));
       on('privacy', d => dispatch({ type: 'privacy', data: d }));
       on('bench', d => dispatch({ type: 'bench', data: d }));
+      on('reval', d => dispatch({ type: 'reval', data: d }));
     };
     connect();
     return () => { closed = true; es?.close(); };

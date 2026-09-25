@@ -389,9 +389,10 @@ async function stageDevelop(run, f) {
   await commit(run, [{ path: f.module, content: code }], `feat(${f.id}): implement ${f.exports.join(', ')}\n\nImplements ${f.acs.map(a => a.id).join(', ')}\nAgent self-check: ${pre.passed}/${pre.total} acceptance tests`, agent);
   await gh.comment(run.pr, gateComment(run, 'develop', agent, gate, step), agent);
   await publishStatus(run, 'adlc/build', gate.pass ? 'success' : 'failure', `G3 ${gate.pass ? 'passed' : 'failed'} · ${gate.guardrails.filter(g => g.pass).length}/${gate.guardrails.length} guardrails`, agent);
-  // Code is cached in Meko only once it passes the test gate (see stageTest).
-  if (gate.pass) await remember(run, 'develop', f, agent, step.decisions, null);
-  run.pendingCode = step.reused ? null : { designHash: design?.hash };
+  // Decisions and code reach shared memory only once the test gate proves them
+  // (see stageTest) — a failed attempt must not teach the team its guesses.
+  run.pendingCode = gate.pass ? { designHash: design?.hash, decisions: step.decisions, reused: step.reused } : null;
+  save(run);
   return { gate, step, file, precheck: pre };
 }
 
@@ -417,7 +418,14 @@ async function stageTest(run, f) {
     ? `Test result ${f.id}: ${agent.name} verified ${acc.passed}/${acc.total} acceptance tests and behavioural eval (${beh.detail}) for ${f.module}.`
     : `Test lesson ${f.id}: failing acceptance tests for ${f.module} — ${acc.failures.slice(0, 3).join(' | ').slice(0, 400)}. Fix these before resubmitting.`;
   await meko.addMemory(agent.id, lesson, { kind: gate.pass ? 'test-result' : 'lesson', feature: f.id, stage: 'test', run: run.id });
-  if (gate.pass && run.pendingCode) { await remember(run, 'develop', f, ownerOf(f), [], state.artifacts[f.id].develop.text, run.pendingCode.designHash, 'text/javascript'); run.pendingCode = null; save(run); }
+  if (gate.pass && run.pendingCode) {
+    const pc = run.pendingCode;
+    await remember(run, 'develop', f, ownerOf(f), pc.decisions ?? [], pc.reused ? null : state.artifacts[f.id].develop.text, pc.designHash, 'text/javascript');
+    run.pendingCode = null; save(run);
+  } else if (!gate.pass && run.pendingCode) {
+    event(run, 'test', `${run.pendingCode.decisions?.length ?? 0} unproven developer decision(s) withheld from Meko — only the lesson is shared`, 'warn');
+    run.pendingCode = null; save(run);
+  }
   return { gate, acceptance: acc, behavioural: beh, failures: acc.failures };
 }
 
@@ -689,6 +697,27 @@ export async function reconcile() {
     }
   }
   return changed;
+}
+
+// Memory hygiene: developer/design decisions written by runs that later failed
+// their test or review gate may be wrong. List them, and retract on request.
+export function hygieneCandidates() {
+  const failed = new Set(Object.values(state.runs).filter(r => r.stages?.test?.status === 'failed' || r.stages?.review?.status === 'failed').map(r => r.id));
+  return (state.memoryLog ?? []).filter(m => m.id && m.metadata?.kind === 'decision' && ['develop', 'design'].includes(m.metadata?.stage) && failed.has(m.metadata?.run))
+    .map(m => ({ id: m.id, agent: m.agent, run: m.metadata.run, feature: m.metadata.feature, stage: m.metadata.stage, text: m.text }));
+}
+
+export async function retractFailedDecisions() {
+  const list = hygieneCandidates();
+  let removed = 0;
+  for (const m of list) {
+    try { await meko.deleteMemory(m.id, m.agent.replace('adlc:', '')); removed++; } catch { /* already gone */ }
+  }
+  const gone = new Set(list.map(m => m.id));
+  state.memoryLog = (state.memoryLog ?? []).filter(m => !gone.has(m.id));
+  setState({ memoryLog: state.memoryLog });
+  emit('hygiene', { removed });
+  return { removed, candidates: list.length };
 }
 
 export const isActive = id => active.has(id);

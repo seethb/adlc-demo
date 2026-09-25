@@ -21,7 +21,7 @@ export const QUESTIONS = [
   { id: 'Q7', q: 'How must the F02 anomaly detector treat a reading that contains NaN or Infinity?', expect: [/reject/i, /count/i], answer: 'Reject it, count it in rejected.count, never score it' },
   { id: 'Q8', q: 'What may edge feature modules import?', expect: [/node:/i, /fleet\.js/i], answer: 'Only node: built-ins and edge/reference/fleet.js' },
   { id: 'Q9', q: 'What is the maximum false-positive rate allowed for the anomaly detector on a healthy fleet?', expect: [/(below|under|<|less than)?\s*1\s*%/i], answer: 'Below 1 %' },
-  { id: 'Q10', q: 'Where must raw 1 Hz telemetry stay, and for how long?', expect: [/edge/i, /7\s*days?/i], answer: 'At the edge, 7 days' },
+  { id: 'Q10', q: 'Where must raw 1 Hz telemetry stay, and for how long?', expect: [/edge/i, /7[\s-]*days?/i], answer: 'At the edge, 7 days' },
   { id: 'Q11', q: 'What are the high-alarm and critical limits for bearing temperature?', expect: [/85/, /95/], answer: '85 °C high, 95 °C critical' },
   { id: 'Q12', q: 'When does a CAR open for a work order that is not P1?', expect: [/(two|2)\s*(or more)?\s*(work orders|WOs)|2\+|>=\s*2|≥\s*2/i, /(three|3)\s*(or more)?\s*(times|occurrences)|occurrences\s*(>=|≥)\s*3|3\+/i], answer: 'On recurrence: ≥2 WOs, or one WO seen ≥3 times, for the same asset + failure mode' },
 ];

@@ -15,6 +15,7 @@ import { ask } from './edge/ask.js';
 import { STANDARDS, KNOWLEDGE } from './seed/knowledge.js';
 import * as privacy from './security/privacy.js';
 import * as bench from './adlc/contextBench.js';
+import * as reval from './adlc/retrievalEval.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -100,6 +101,10 @@ app.get('/api/meko/internals', wrap(() => meko.internals()));
 // ---- context quality benchmark ----------------------------------------------------
 app.get('/api/bench', wrap(() => ({ ...bench.status(), questions: bench.QUESTIONS.map(q => ({ id: q.id, q: q.q, answer: q.answer })), levels: bench.LEVELS.map(l => ({ n: l.n, label: l.label })) })));
 app.get('/api/bench/estimate', wrap(req => bench.estimate(Math.min(12, Math.max(1, Number(req.query.n) || 12)))));
+app.get('/api/reval', wrap(() => ({ ...reval.status(), questions: reval.EVALSET.length })));
+app.get('/api/meko/hygiene', wrap(() => orch.hygieneCandidates()));
+app.post('/api/meko/hygiene/retract', wrap(() => orch.retractFailedDecisions()));
+app.post('/api/reval/run', wrap(() => { reval.run().catch(() => {}); return { ok: true }; }));
 app.post('/api/bench/run', wrap(req => { bench.run({ questions: Math.min(12, Math.max(1, Number(req.body?.questions) || 12)) }).catch(() => {}); return { ok: true }; }));
 app.get('/api/knowledge', wrap(() => KNOWLEDGE.map(k => ({ file: k.file, title: k.title, body: k.body }))));
 

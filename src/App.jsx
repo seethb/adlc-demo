@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LayoutDashboard, GitBranch, Users, Brain, Github, Coins, Factory, MessagesSquare, FileText, ShieldCheck, Network, Cpu, Share2, TrendingDown, Sparkles, X, ExternalLink, AlertTriangle, Lock } from 'lucide-react';
+import { LayoutDashboard, GitBranch, Users, Brain, Github, Coins, Factory, MessagesSquare, FileText, ShieldCheck, Network, Cpu, Share2, TrendingDown, Target, Sparkles, X, ExternalLink, AlertTriangle, Lock } from 'lucide-react';
 import { useLive, fmt } from './api.js';
 import Mission from './pages/Mission.jsx';
 import Pipeline from './pages/Pipeline.jsx';
@@ -15,6 +15,7 @@ import Architecture from './pages/Architecture.jsx';
 import MekoInternals from './pages/MekoInternals.jsx';
 import Handoffs from './pages/Handoffs.jsx';
 import ContextQuality from './pages/ContextQuality.jsx';
+import MekoAccuracy from './pages/MekoAccuracy.jsx';
 
 const PAGES = [
   { id: 'mission', label: 'Mission Control', icon: LayoutDashboard, group: 'ADLC', sub: 'Ten agents, one shared memory, every gate visible' },
@@ -31,6 +32,7 @@ const PAGES = [
   { id: 'meko-internals', label: 'Meko Internals', icon: Cpu, group: 'Under the hood', sub: 'How Meko’s shared memory works — MCP access, scoping, engines and storage' },
   { id: 'handoffs', label: 'Agent Handoffs', icon: Share2, group: 'Under the hood', sub: 'Agent-to-agent communication through Meko shared memory — replay, simulate, live' },
   { id: 'context-quality', label: 'Context Quality', icon: TrendingDown, group: 'Under the hood', sub: 'Proof: output quality vs context size — context stuffing vs Meko-engineered context' },
+  { id: 'meko-accuracy', label: 'Meko Accuracy', icon: Target, group: 'Under the hood', sub: 'Proof: retrieval relevance (Hit@k, MRR, precision) and answer accuracy from Meko context' },
 ];
 
 // Keeps one page's crash from blanking the whole Studio.
@@ -84,6 +86,7 @@ export default function App() {
       case 'meko-internals': return <MekoInternals {...props} />;
       case 'handoffs': return <Handoffs {...props} />;
       case 'context-quality': return <ContextQuality {...props} />;
+      case 'meko-accuracy': return <MekoAccuracy {...props} />;
       default: return <Mission {...props} />;
     }
   })();

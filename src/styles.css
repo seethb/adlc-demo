@@ -406,3 +406,12 @@ pre.code { margin: 0; background: #f8fafc; border: 1px solid var(--line); border
 .cq-key span { font-size: 11.5px; font-weight: 700; }
 .cq-key small { font-size: 10.5px; color: var(--muted); line-height: 1.3; }
 @media (max-width: 1280px) { .cq-key { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* ---- Meko accuracy ---- */
+.rv { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: var(--mono); border: 1px solid transparent; }
+.rv2 { background: #dcfce7; color: #15803d; }
+.rv1 { background: #fef9c3; color: #a16207; }
+.rv0 { background: #f1f5f9; color: #94a3b8; }
+.rvx { background: #f8fafc; color: #cbd5e1; }
+.rv.gold { box-shadow: 0 0 0 2px #7c3aed; }
+.cq-facts { display: flex; flex-direction: column; gap: 10px; }

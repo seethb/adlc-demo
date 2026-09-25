@@ -4,6 +4,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createHash } from 'node:crypto';
 import { env, emit } from '../core.js';
+import { redact } from '../security/privacy.js';
 
 const hasKey = () => !!process.env.ANTHROPIC_API_KEY;
 let client = null;
@@ -23,11 +24,12 @@ export async function complete({ system, prompt, maxTokens = 16000, effort = 'lo
   if (!hasKey()) throw new Error('ANTHROPIC_API_KEY is not set');
   const t0 = Date.now();
   emit('llm', { agent, label, phase: 'start', model: model() });
+  // Privacy shield: nothing personal reaches the model.
   const params = {
     model: model(),
     max_tokens: maxTokens,
-    system,
-    messages: [{ role: 'user', content: prompt }],
+    system: redact(system, 'claude'),
+    messages: [{ role: 'user', content: redact(prompt, 'claude') }],
     output_config: { effort },
   };
   let msg;
@@ -61,7 +63,7 @@ export async function countTokens(system, prompt) {
   let n;
   if (hasKey()) {
     try {
-      n = (await sdk().messages.countTokens({ model: model(), system, messages: [{ role: 'user', content: prompt }] })).input_tokens;
+      n = (await sdk().messages.countTokens({ model: model(), system: redact(system, 'claude'), messages: [{ role: 'user', content: redact(prompt, 'claude') }] })).input_tokens;
       stats.counted++;
     } catch { n = Math.ceil((system.length + prompt.length) / 3.6); }
   } else n = Math.ceil((system.length + prompt.length) / 3.6);

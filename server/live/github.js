@@ -4,6 +4,7 @@
 // records a deployment. Every action is streamed to the UI.
 import { execSync } from 'node:child_process';
 import { env, emit } from '../core.js';
+import { redactDeep } from '../security/privacy.js';
 
 let token = null;
 const getToken = () => {
@@ -21,7 +22,8 @@ export async function api(method, path, body) {
   const r = await fetch(url, {
     method,
     headers: { Authorization: `Bearer ${getToken()}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'adlc-studio' },
-    body: body ? JSON.stringify(body) : undefined,
+    // Privacy shield: PR text, comments, commit messages and file contents.
+    body: body ? JSON.stringify(redactDeep(body, 'github')) : undefined,
   });
   rate.remaining = Number(r.headers.get('x-ratelimit-remaining')); rate.limit = Number(r.headers.get('x-ratelimit-limit'));
   if (r.status === 204) return null;

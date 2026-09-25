@@ -34,6 +34,10 @@ Include: Module structure (functions, internal state); Contract signatures for $
       return `Implement ${feature.module} for ${feature.id} "${feature.title}".
 Required exports: ${feature.exports.join(', ')}. The module must pass the acceptance tests for these criteria:
 ${acs}
+The executable acceptance suite your module must pass (it imports your module's exports; read it carefully — method names, return shapes and field names must match exactly):
+\`\`\`js
+${extra.tests ?? ''}
+\`\`\`
 If you need the plant fleet definitions, import { FLEET, ASSET_TYPES, FAULTS } from '../../reference/fleet.js' (FLEET: [{id,name,type,line,criticality}], ASSET_TYPES: {type:{label, nominal:{metric:[mean, sigma]}}}, FAULTS: {fault:{label, appliesTo:[types], effects:{metric: perTickFraction}, jitter?:{metric: sigmaMultiplier}}}).${extra.failures ? `\n\nYour previous attempt failed these tests — fix them:\n${extra.failures}` : ''}`;
     case 'review':
       return `Review the change for ${feature.id} "${feature.title}" (${feature.module}). Acceptance criteria:\n${acs}\n\nTest report: ${extra.testSummary ?? 'n/a'}`;

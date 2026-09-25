@@ -15,6 +15,7 @@ import * as guard from './guardrails.js';
 import * as econ from './economics.js';
 import { SYSTEM, task, parseOutput, parseReview } from './prompts.js';
 import { KNOWLEDGE, STANDARDS } from '../seed/knowledge.js';
+import { redact } from '../security/privacy.js';
 
 const run$ = promisify(execFile);
 const sha = t => createHash('sha256').update(t).digest('hex').slice(0, 12);
@@ -29,7 +30,12 @@ const approvals = new Map();
 const active = new Set();
 
 // Runs interrupted by a restart are marked so the UI can offer a retry.
-for (const r of Object.values(state.runs)) if (['running', 'queued'].includes(r.status)) { r.status = 'interrupted'; for (const s of Object.values(r.stages)) if (['running', 'awaiting_approval'].includes(s.status)) s.status = 'interrupted'; }
+// A run parked at the release gate stays parked: approving it later resumes the deploy.
+for (const r of Object.values(state.runs)) {
+  if (r.stages?.deploy?.status === 'awaiting_approval') { r.status = 'awaiting_approval'; continue; }
+  if (['running', 'queued'].includes(r.status)) { r.status = 'interrupted'; for (const s of Object.values(r.stages)) if (s.status === 'running') s.status = 'interrupted'; }
+}
+const preApproved = new Map();
 
 const ownerOf = f => roster().agents.find(a => a.stages.includes('develop') && a.features.includes(f.id));
 const stageAgent = (stage, f) => (stage === 'develop' ? ownerOf(f) : getAgent(gates().stages.find(s => s.id === stage).agent));
@@ -56,18 +62,24 @@ const STAGE_QUERY = {
 
 async function recall(agent, f, stage) {
   const deps = f.depends.map(d => getFeature(d)).filter(Boolean);
+  const STANDARD_QUERIES = {
+    plan: ['Org standard identifiers timestamps acceptance tests immutable', 'Privacy standard personal data names emails team ids'],
+    design: ['IoT security standard transport security data classification', 'Privacy standard personal data names emails team ids'],
+    develop: ['Org standard edge modules imports AC ids severity priority', 'IoT security standard telemetry untrusted input read-only towards OT'],
+    review: ['IoT security standard transport security data classification', 'Privacy standard personal data names emails team ids', 'Org standard secrets acceptance tests immutable'],
+  };
   const queries = [
     `${f.id} ${f.title}: ${STAGE_QUERY[stage] ?? stage}`,
-    deps.length ? `${deps.map(d => `${d.id} ${d.title}`).join(', ')} contract shape decisions` : `org standards ${STAGE_QUERY[stage] ?? ''}`,
+    ...(deps.length ? [`${deps.map(d => `${d.id} ${d.title}`).join(', ')} contract shape decisions`] : []),
+    ...(STANDARD_QUERIES[stage] ?? []),
   ];
-  if (stage === 'review' || stage === 'design') queries.push('IoT security standard transport security data classification');
   const [lists, kb] = await Promise.all([
     Promise.all(queries.map(q => meko.searchMemory(agent.id, q, 8))),
     meko.searchKnowledge(agent.id, `${f.title} ${STAGE_QUERY[stage] ?? ''}`, stage === 'review' ? 5 : 4),
   ]);
   const byId = new Map();
   for (const m of lists.flat()) if (m?.id && m.metadata?.kind !== 'artifact' && !byId.has(m.id)) byId.set(m.id, m);
-  const all = [...byId.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 12);
+  const all = [...byId.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 14);
   const { clean, quarantined } = guard.screenMemories(all);
   return { memories: clean, quarantined, kb };
 }
@@ -157,8 +169,8 @@ async function agentStep(run, stage, f, agent, { upstream, upstreamHash, extra, 
 async function remember(run, stage, f, agent, decisions, artifactText, upstreamHash, contentType = 'text/markdown') {
   let written = 0;
   for (const d of decisions) {
-    const check = guard.run(['secret-scan'], { text: d })[0];
-    if (!check.pass) { event(run, stage, `Blocked a decision from Meko: ${check.detail}`, 'warn'); continue; }
+    const check = guard.run(['secret-scan', 'pii-scan'], { text: d }).find(r => !r.pass);
+    if (check) { event(run, stage, `Blocked a decision from Meko (${check.id}): ${check.detail}`, 'warn'); continue; }
     await meko.addMemory(agent.id, d, { kind: 'decision', feature: f.id, stage, run: run.id });
     written++;
   }
@@ -266,7 +278,14 @@ async function acceptance(file, f) {
     out = r.stdout;
   } catch (e) { out = (e.stdout ?? '') + (e.killed ? '\n# timed out' : ''); }
   const tests = [...out.matchAll(/^(not ok|ok) \d+ - (.+)$/gm)].map(m => ({ ok: m[1] === 'ok', name: m[2].replace(/^\[[^\]]+\]\s*/, ''), ac: (m[2].match(/AC-F\d\d-\d+/) ?? [])[0] }));
-  const failures = [...out.matchAll(/^not ok \d+ - (.+)$[\s\S]*?error: ([^\n]+)/gm)].map(m => `${m[1].replace(/^\[[^\]]+\]\s*/, '')}: ${m[2].replace(/^['"]|['"]$/g, '')}`);
+  // TAP failure blocks carry the assertion as YAML (`error: |-` + indented lines).
+  const failures = out.split(/^(?=not ok \d+ - )/m).filter(b => b.startsWith('not ok')).map(b => {
+    const name = b.match(/^not ok \d+ - (.+)$/m)[1].replace(/^\[[^\]]+\]\s*/, '');
+    const err = b.match(/error: (?:\|-?\n)?([\s\S]*?)\n\s*(?:code|name|expected|actual|operator|stack|failureType|location):/);
+    const msg = (err ? err[1] : '').split('\n').map(l => l.trim()).filter(Boolean).join(' ').replace(/^['"]|['"]$/g, '');
+    const exp = b.match(/\n\s*expected: ([^\n]+)/)?.[1], act = b.match(/\n\s*actual: ([^\n]+)/)?.[1];
+    return `${name} — ${msg || 'assertion failed'}${exp !== undefined ? ` (expected ${exp}, actual ${act})` : ''}`.slice(0, 400);
+  });
   const passed = tests.filter(t => t.ok).length;
   return { tests, passed, total: tests.length, failures, rate: tests.length ? passed / tests.length : 0 };
 }
@@ -323,7 +342,8 @@ async function stageDevelop(run, f) {
   const agent = stageAgent('develop', f);
   const design = state.artifacts[f.id]?.design;
   const lessons = run.stages.test?.failures?.length ? run.stages.test.failures.join('\n') : null;
-  let step = await agentStep(run, 'develop', f, agent, { upstream: design?.text, upstreamHash: design?.hash, code: true, maxTokens: 16000, effort: 'medium', extra: lessons ? { failures: lessons } : undefined });
+  const tests = readText(f.testFile);
+  let step = await agentStep(run, 'develop', f, agent, { upstream: design?.text, upstreamHash: design?.hash, code: true, maxTokens: 16000, effort: 'medium', extra: { tests, ...(lessons ? { failures: lessons } : {}) } });
   const file = workFile(run, f);
   writeFileSync(file, step.artifact);
 
@@ -332,7 +352,7 @@ async function stageDevelop(run, f) {
   event(run, 'develop', `${agent.name} self-check: ${pre.passed}/${pre.total} acceptance tests pass`);
   if (pre.rate < 1 && claude.enabled()) {
     event(run, 'develop', `${agent.name} is repairing ${pre.total - pre.passed} failing test(s)`, 'warn');
-    const repair = await agentStep(run, 'develop', f, agent, { upstream: `${design?.text ?? ''}\n\n# Your previous module\n${step.artifact}`, code: true, maxTokens: 16000, effort: 'medium', extra: { failures: pre.failures.join('\n') || 'see acceptance criteria' }, allowCache: false });
+    const repair = await agentStep(run, 'develop', f, agent, { upstream: `${design?.text ?? ''}\n\n# Your previous module\n${step.artifact}`, code: true, maxTokens: 16000, effort: 'medium', extra: { tests, failures: pre.failures.join('\n') || 'see acceptance criteria' }, allowCache: false });
     writeFileSync(file, repair.artifact);
     const again = await acceptance(file, f);
     event(run, 'develop', `${agent.name} after repair: ${again.passed}/${again.total} acceptance tests pass`);
@@ -351,7 +371,9 @@ async function stageDevelop(run, f) {
   await commit(run, [{ path: f.module, content: code }], `feat(${f.id}): implement ${f.exports.join(', ')}\n\nImplements ${f.acs.map(a => a.id).join(', ')}\nAgent self-check: ${pre.passed}/${pre.total} acceptance tests`, agent);
   await gh.comment(run.pr, gateComment(run, 'develop', agent, gate, step), agent);
   await publishStatus(run, 'adlc/build', gate.pass ? 'success' : 'failure', `G3 ${gate.pass ? 'passed' : 'failed'} · ${gate.guardrails.filter(g => g.pass).length}/${gate.guardrails.length} guardrails`, agent);
-  if (gate.pass) await remember(run, 'develop', f, agent, step.decisions, step.reused ? null : code, design?.hash, 'text/javascript');
+  // Code is cached in Meko only once it passes the test gate (see stageTest).
+  if (gate.pass) await remember(run, 'develop', f, agent, step.decisions, null);
+  run.pendingCode = step.reused ? null : { designHash: design?.hash };
   return { gate, step, file, precheck: pre };
 }
 
@@ -362,7 +384,7 @@ async function stageTest(run, f) {
   const acc = await acceptance(file, f);
   const beh = await behavioural(file, f);
   const gate = {
-    guardrails: guard.run(['tests-immutable'], { files: [f.module], agent }),
+    guardrails: guard.run(['tests-immutable'], { files: [f.module], agent }).concat(guard.run(['pii-scan'], { text: acc.failures.join('\n') })),
     evals: [evalResult('acceptance-pass-rate', acc.rate, `${acc.passed}/${acc.total} acceptance tests`), evalResult('behavioural', beh.score, beh.detail)],
   };
   gate.pass = !guard.blocking(gate.guardrails).length && gate.evals.every(e => e.pass);
@@ -377,6 +399,7 @@ async function stageTest(run, f) {
     ? `Test result ${f.id}: ${agent.name} verified ${acc.passed}/${acc.total} acceptance tests and behavioural eval (${beh.detail}) for ${f.module}.`
     : `Test lesson ${f.id}: failing acceptance tests for ${f.module} — ${acc.failures.slice(0, 3).join(' | ').slice(0, 400)}. Fix these before resubmitting.`;
   await meko.addMemory(agent.id, lesson, { kind: gate.pass ? 'test-result' : 'lesson', feature: f.id, stage: 'test', run: run.id });
+  if (gate.pass && run.pendingCode) { await remember(run, 'develop', f, ownerOf(f), [], state.artifacts[f.id].develop.text, run.pendingCode.designHash, 'text/javascript'); run.pendingCode = null; save(run); }
   return { gate, acceptance: acc, behavioural: beh, failures: acc.failures };
 }
 
@@ -388,7 +411,7 @@ async function stageReview(run, f) {
   const judge = { score: step.score, summary: step.summary, findings: step.findings };
   const blockingFindings = judge.findings.filter(x => ['high', 'critical'].includes(String(x.severity).toLowerCase()));
   const gate = {
-    guardrails: guard.run(['secret-scan', 'plaintext-transport', 'ot-write-prohibited'], { text: code }).concat(guard.run(['prompt-injection', 'memory-provenance'], { memories: step.ctx.memories }), guard.run(['token-budget'], { tokens: step.mekoIn, agent })),
+    guardrails: guard.run(['pii-scan', 'secret-scan', 'plaintext-transport', 'ot-write-prohibited'], { text: code }).concat(guard.run(['prompt-injection', 'memory-provenance'], { memories: step.ctx.memories }), guard.run(['token-budget'], { tokens: step.mekoIn, agent })),
     evals: [evalResult('llm-judge', judge.score, judge.summary.slice(0, 140))],
   };
   gate.pass = !guard.blocking(gate.guardrails).length && gate.evals.every(e => e.pass) && !blockingFindings.length;
@@ -403,12 +426,14 @@ async function stageReview(run, f) {
 async function stageDeploy(run, f) {
   const agent = stageAgent('deploy', f);
   await setStageLabel(run, 'deploy');
-  let approval = null;
-  if (settings.autoApprove) approval = { by: 'auto-approve (demo setting)', at: new Date().toISOString() };
+  let approval = preApproved.get(run.id) ?? null;
+  preApproved.delete(run.id);
+  if (approval) { /* approved while the server was restarting */ }
+  else if (settings.autoApprove) approval = { by: 'auto-approve (demo setting)', at: new Date().toISOString() };
   else {
     stageUpdate(run, 'deploy', { status: 'awaiting_approval' });
     event(run, 'deploy', `Waiting for a human approval (owner ${ownerOf(f)?.owner ?? 'release manager'} or release manager)`);
-    await gh.comment(run.pr, `### ⏸️ G6 · Release gate — waiting for human approval\nAll automated gates are green. **${ownerOf(f)?.owner}** (feature owner) or the release manager must approve in the ADLC Studio before Helm merges and deploys.`, agent);
+    await gh.comment(run.pr, `### ⏸️ G6 · Release gate — waiting for human approval\nAll automated gates are green. The feature owner **${ownerOf(f)?.owner}** (${ownerOf(f)?.ownerRole}) or the release manager must approve in the ADLC Studio before Helm merges and deploys.`, agent);
     approval = await new Promise(resolve => approvals.set(run.id, resolve));
     approvals.delete(run.id);
     stageUpdate(run, 'deploy', { status: 'running' });
@@ -452,7 +477,7 @@ function prBody(run, f) {
   const a = ownerOf(f);
   return `## ${f.id} · ${f.title}
 
-Spec: [\`${f.specFile}\`](../blob/main/${f.specFile}) · owner agent **${a?.name}** (${a?.role}) · human owner **${a?.owner}**
+Spec: [\`${f.specFile}\`](../blob/main/${f.specFile}) · owner agent **${a?.name}** (${a?.role}) · human owner **${a?.owner}** (${a?.ownerRole})
 
 This PR is driven by the ADLC Studio. Each stage below is run by a different agent, recalls shared context from the **Meko** datapack \`iot-edge-adlc\`, and must pass its gate before the next starts.
 
@@ -533,18 +558,29 @@ export function start(featureId, opts) {
 export function retry(runId, from) {
   const prev = state.runs[runId];
   if (!prev) throw new Error('unknown run');
-  const stage = from ?? (prev.failedStage === 'test' || prev.failedStage === 'review' ? 'develop' : prev.failedStage ?? 'plan');
+  const firstOpen = STAGES.find(st => !['passed'].includes(prev.stages[st]?.status));
+  const stage = from ?? (prev.failedStage === 'test' || prev.failedStage === 'review' ? 'develop' : prev.failedStage ?? firstOpen ?? 'plan');
   const run = createRun(prev.feature, { from: stage, parent: runId });
-  if (stage === 'develop' && prev.stages.test?.failures) run.stages.test = { status: 'pending', failures: prev.stages.test.failures, agent: prev.stages.test.agent };
+  // Send the gate's findings back to the developer as the lessons to fix.
+  const lessons = prev.failedStage === 'review'
+    ? (prev.stages.review?.judge?.findings ?? []).map(x => `Review finding (${x.severity}) — ${x.title}: ${x.detail}`)
+    : prev.stages.test?.failures;
+  if (stage === 'develop' && lessons?.length) run.stages.test = { status: 'pending', failures: lessons, agent: prev.stages.test?.agent };
   save(run);
   execute(run);
   return run;
 }
 
 export function approve(runId, { by, note, reject = false }) {
+  // Approvers are recorded by role / team id only; free text is redacted.
+  const approval = { by: redact(String(by ?? 'release manager'), 'internal').slice(0, 60), note: note ? redact(String(note), 'internal').slice(0, 300) : undefined, at: new Date().toISOString(), rejected: reject };
   const resolve = approvals.get(runId);
-  if (!resolve) throw new Error('run is not waiting for approval');
-  resolve({ by, note, at: new Date().toISOString(), rejected: reject });
+  if (resolve) return resolve(approval);
+  const parked = state.runs[runId];
+  if (parked?.stages?.deploy?.status !== 'awaiting_approval') throw new Error('run is not waiting for approval');
+  const next = createRun(parked.feature, { from: 'deploy', parent: runId });
+  preApproved.set(next.id, approval);
+  execute(next);
 }
 
 // Sprint: every feature in dependency order, a few at a time. Dependents wait
@@ -573,4 +609,4 @@ export async function sprint(ids = features().map(f => f.id)) {
 }
 
 export const isActive = id => active.has(id);
-export const waitingApproval = () => [...approvals.keys()];
+export const waitingApproval = () => Object.values(state.runs).filter(r => r.stages?.deploy?.status === 'awaiting_approval').map(r => r.id);

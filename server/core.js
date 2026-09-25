@@ -2,7 +2,7 @@
 // subscribes to over SSE.
 import 'dotenv/config';
 import { EventEmitter } from 'node:events';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,9 +24,19 @@ bus.setMaxListeners(100);
 export const emit = (type, data) => bus.emit('event', { type, data, at: Date.now() });
 
 mkdirSync(STATE_DIR, { recursive: true });
-export const state = existsSync(STATE_FILE) ? JSON.parse(readFileSync(STATE_FILE, 'utf8')) : {};
+function load() {
+  try { return existsSync(STATE_FILE) ? JSON.parse(readFileSync(STATE_FILE, 'utf8')) : {}; }
+  catch { return {}; }
+}
+export const state = load();
 let saveTimer = null;
-const flush = () => { clearTimeout(saveTimer); saveTimer = null; writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); };
+// Atomic write (temp file + rename) so a concurrent reader never sees a half-written file.
+const flush = () => {
+  clearTimeout(saveTimer); saveTimer = null;
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(state, null, 2));
+  renameSync(tmp, STATE_FILE);
+};
 export function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flush, 200);

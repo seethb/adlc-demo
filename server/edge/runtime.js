@@ -64,7 +64,7 @@ export function snapshot(compact = false) {
       history: compact ? h.slice(-60) : h,
     };
   });
-  return {
+  const snap = {
     tick: tickCount,
     assets,
     anomalies: anomalies.slice(0, compact ? 40 : 200),
@@ -75,8 +75,10 @@ export function snapshot(compact = false) {
     events: events.slice(0, 40),
     security: { rejectedReadings: det.rejected.count, lastRejected: det.rejected.last, events: securityEvents.slice(0, 20) },
     deployments: state.deployments ?? {},
-    catalog: compact ? undefined : { faults: Object.fromEntries(Object.entries(FAULTS).map(([k, v]) => [k, { label: v.label, appliesTo: v.appliesTo }])), metrics: METRICS },
   };
+  // The 1 Hz stream omits the static catalog so it never overwrites it with nothing.
+  if (!compact) snap.catalog = { faults: Object.fromEntries(Object.entries(FAULTS).map(([k, v]) => [k, { label: v.label, appliesTo: v.appliesTo }])), metrics: METRICS };
+  return snap;
 }
 
 export function inject(assetId, fault) { sim.inject(assetId, fault); note('fault', `Injected ${FAULTS[fault].label} on ${assetId}`, { assetId }); }

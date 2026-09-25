@@ -1,12 +1,12 @@
 {
   "datapack": "iot-edge-adlc",
-  "note": "Ten team members, each paired with one agent. Every agent reads and writes the same Meko datapack under its own agent_id, so decisions made by one are recalled by the others instead of being re-derived from the full corpus.",
+  "note": "Ten team members, each paired with one agent. Every agent reads and writes the same Meko datapack under its own agent_id, so decisions made by one are recalled by the others instead of being re-derived from the full corpus. Owners are pseudonymous team ids (TM-01…TM-10) plus role — no personal names are stored in the repo, sent to Claude, written to Meko or posted to GitHub.",
   "agents": [
     {
       "id": "atlas",
       "name": "Atlas",
       "role": "Product & Spec Agent",
-      "owner": "Priya",
+      "owner": "TM-01",
       "ownerRole": "Product owner",
       "stages": [
         "plan"
@@ -20,6 +20,7 @@
         "specs/features/*/plan.md"
       ],
       "guardrails": [
+        "pii-scan",
         "spec-frontmatter",
         "acceptance-criteria-present",
         "token-budget",
@@ -34,7 +35,7 @@
       "id": "vega",
       "name": "Vega",
       "role": "Solution Architect Agent",
-      "owner": "Marcus",
+      "owner": "TM-02",
       "ownerRole": "Architect",
       "stages": [
         "design"
@@ -48,6 +49,7 @@
         "specs/features/*/design.md"
       ],
       "guardrails": [
+        "pii-scan",
         "contract-conformance",
         "dependency-allowlist",
         "plaintext-transport",
@@ -63,7 +65,7 @@
       "id": "orion",
       "name": "Orion",
       "role": "Telemetry Engineer",
-      "owner": "Elena",
+      "owner": "TM-03",
       "ownerRole": "IoT engineer",
       "stages": [
         "develop"
@@ -77,6 +79,7 @@
         "edge/features/F01-iot-simulator/**"
       ],
       "guardrails": [
+        "pii-scan",
         "path-scope",
         "secret-scan",
         "dependency-allowlist",
@@ -95,7 +98,7 @@
       "id": "lyra",
       "name": "Lyra",
       "role": "Analytics Engineer",
-      "owner": "Kenji",
+      "owner": "TM-04",
       "ownerRole": "Data scientist",
       "stages": [
         "develop"
@@ -109,6 +112,7 @@
         "edge/features/F02-anomaly-detection/**"
       ],
       "guardrails": [
+        "pii-scan",
         "path-scope",
         "secret-scan",
         "dependency-allowlist",
@@ -127,7 +131,7 @@
       "id": "nova",
       "name": "Nova",
       "role": "Maintenance Automation Engineer",
-      "owner": "Amara",
+      "owner": "TM-05",
       "ownerRole": "Reliability engineer",
       "stages": [
         "develop"
@@ -143,6 +147,7 @@
         "edge/features/F04-corrective-action/**"
       ],
       "guardrails": [
+        "pii-scan",
         "path-scope",
         "secret-scan",
         "dependency-allowlist",
@@ -161,7 +166,7 @@
       "id": "rigel",
       "name": "Rigel",
       "role": "Supply Chain Engineer",
-      "owner": "Sofia",
+      "owner": "TM-06",
       "ownerRole": "MRO planner",
       "stages": [
         "develop"
@@ -175,6 +180,7 @@
         "edge/features/F05-inventory/**"
       ],
       "guardrails": [
+        "pii-scan",
         "path-scope",
         "secret-scan",
         "dependency-allowlist",
@@ -193,7 +199,7 @@
       "id": "sage",
       "name": "Sage",
       "role": "Conversational AI Engineer",
-      "owner": "Liam",
+      "owner": "TM-07",
       "ownerRole": "NLP engineer",
       "stages": [
         "develop"
@@ -207,6 +213,7 @@
         "edge/features/F06-nl-asset-query/**"
       ],
       "guardrails": [
+        "pii-scan",
         "path-scope",
         "secret-scan",
         "dependency-allowlist",
@@ -225,7 +232,7 @@
       "id": "quill",
       "name": "Quill",
       "role": "QA & Evaluation Agent",
-      "owner": "Noor",
+      "owner": "TM-08",
       "ownerRole": "QA lead",
       "stages": [
         "test"
@@ -239,6 +246,7 @@
         "specs/features/*.acceptance.test.js"
       ],
       "guardrails": [
+        "pii-scan",
         "tests-immutable"
       ],
       "evals": {
@@ -251,7 +259,7 @@
       "id": "sentinel",
       "name": "Sentinel",
       "role": "Security & Guardrail Reviewer",
-      "owner": "Theo",
+      "owner": "TM-09",
       "ownerRole": "AppSec engineer",
       "stages": [
         "review"
@@ -263,6 +271,7 @@
       "icon": "shield-check",
       "scope": [],
       "guardrails": [
+        "pii-scan",
         "secret-scan",
         "plaintext-transport",
         "ot-write-prohibited",
@@ -279,7 +288,7 @@
       "id": "helm",
       "name": "Helm",
       "role": "Release & Deploy Agent",
-      "owner": "Grace",
+      "owner": "TM-10",
       "ownerRole": "Platform engineer",
       "stages": [
         "deploy"
@@ -291,6 +300,7 @@
       "icon": "rocket",
       "scope": [],
       "guardrails": [
+        "pii-scan",
         "all-checks-green",
         "human-approval"
       ],

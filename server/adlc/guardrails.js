@@ -6,6 +6,7 @@ import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { gates, roster } from './specs.js';
+import { scan as piiScan } from '../security/privacy.js';
 
 const sev = id => gates().guardrails[id]?.severity ?? 'block';
 const result = (id, pass, detail) => ({ id, pass, severity: sev(id), detail, description: gates().guardrails[id]?.description });
@@ -44,6 +45,11 @@ export const checks = {
     const res = agent.scope.map(globToRe);
     const out = files.filter(f => !res.some(r => r.test(f)));
     return result('path-scope', !out.length, out.length ? `outside ${agent.name}'s scope: ${out.join(', ')}` : `${files.length} file(s) inside ${agent.scope.join(', ')}`);
+  },
+  'pii-scan': ({ text }) => {
+    // Report types only — never echo the personal data itself.
+    const types = [...new Set(piiScan(text ?? '').map(f => f.type))];
+    return result('pii-scan', !types.length, types.length ? `personal data found: ${types.join(', ')}` : 'no PII or private data');
   },
   'secret-scan': ({ text }) => {
     const hits = SECRET_PATTERNS.filter(([re]) => re.test(text)).map(([, n]) => n);

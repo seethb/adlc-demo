@@ -66,3 +66,32 @@ at the gateway, so integrity survives broker hops.
 - `secret-scan` blocks C3 material in code, PR text and Meko memories.
 - `ot-write-prohibited` blocks Modbus/OPC-UA writes and setpoint changes in edge code (read-only towards OT).
 - `prompt-injection` and `memory-provenance` screen recalled memories before they reach an LLM.
+
+## 6. Privacy — PII never leaves the system
+**Rule:** no personally identifiable or private information is ever sent to Claude, written to
+Meko, or posted to GitHub (code, commits, PR text, comments, statuses). This is a blocking
+guardrail at every gate, and it is also enforced mechanically at the point of egress.
+
+| What counts as PII / private data | Examples |
+|---|---|
+| Identity | person names, employee ids, usernames, signatures |
+| Contact | email addresses, phone numbers, postal addresses |
+| Government / financial ids | SSN, Aadhaar, PAN, passport numbers, IBAN, card numbers |
+| Location and network | GPS coordinates of people, personal IP addresses |
+| Sensitive | date of birth, health or medical details, salary or compensation |
+
+**How it is enforced**
+1. **Privacy shield at egress** (`server/security/privacy.js`). Every outbound payload is scanned and PII is replaced with `[REDACTED:<TYPE>]` before it leaves the process:
+   - Claude prompts, including `count_tokens`.
+   - Every Meko MCP argument, artifact body and knowledge upload.
+   - Every GitHub REST body.
+   Only the type and destination of each redaction are recorded; the value itself is never stored or logged.
+2. **`pii-scan` guardrail (block)** on:
+   - plans, designs, code and test reports;
+   - review input;
+   - every decision before it is written to Meko;
+   - team memories added from the Studio.
+3. **Pseudonymous team:** people appear only as team ids and roles (`TM-01 · Product owner`). No personal names are in the repo. Approvals are recorded by role or team id.
+4. **NL queries:** personal data typed into "Ask the fleet" is redacted before Meko or Claude sees the question, and the user is told what was removed.
+5. **Telemetry is C2 plant data, not personal data:** readings, work orders and CARs carry asset ids, never operator or technician names.
+6. **Extra denylist:** set `PII_DENYLIST` in `.env` (comma-separated names, handles or emails) to redact specific people's identifiers. The machine's git identity is always included.

@@ -3,7 +3,7 @@
 import express from 'express';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
-import { ROOT, bus, state, setState, env, emit } from './core.js';
+import { ROOT, bus, state, setState, env, emit, readText } from './core.js';
 import * as meko from './live/meko.js';
 import * as gh from './live/github.js';
 import * as claude from './live/claude.js';
@@ -13,6 +13,7 @@ import { features, feature, roster, gates } from './adlc/specs.js';
 import * as edge from './edge/runtime.js';
 import { ask } from './edge/ask.js';
 import { STANDARDS, KNOWLEDGE } from './seed/knowledge.js';
+import * as privacy from './security/privacy.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -55,7 +56,12 @@ app.get('/api/bootstrap', wrap(async () => ({
   github: { snapshot: ghSnap, activity: gh.activity.slice(0, 80), url: gh.repoUrl(), repo: gh.repo() },
   claude: { model: claude.model(), price: claude.price(), enabled: claude.enabled(), stats: claude.stats },
   deployments: state.deployments ?? {},
+  privacy: privacy.summary(),
 })));
+app.get('/api/privacy', wrap(() => privacy.summary()));
+// Local-only preview of the shield: the text is redacted in-process and never forwarded.
+app.post('/api/privacy/test', wrap(req => { const text = String(req.body.text ?? '').slice(0, 4000); return { redacted: privacy.redact(text, 'preview'), types: [...new Set(privacy.scan(text).map(f => f.type))] }; }));
+app.get('/api/docs', wrap(() => ['specs/README.md', 'specs/00-charter.md', 'specs/01-plan/roadmap.md', 'specs/02-design/architecture.md', 'specs/02-design/security.md', 'CONTRIBUTING.md'].map(p => ({ path: p, text: readText(p) }))));
 
 // ---- specs & runs ---------------------------------------------------------------
 app.get('/api/features/:id', wrap(req => { const f = feature(req.params.id); if (!f) throw new Error('unknown feature'); return { ...f, artifacts: state.artifacts?.[f.id] ?? {}, deployed: state.deployments?.[f.id] ?? null }; }));
@@ -81,8 +87,8 @@ app.post('/api/meko/memories', wrap(async req => {
   const who = String(req.body.agent || 'org').replace(/[^a-z]/g, '');
   const text = String(req.body.text ?? '').trim();
   if (text.length < 10) throw new Error('memory text is too short');
-  const scan = (await import('./adlc/guardrails.js')).run(['secret-scan'], { text })[0];
-  if (!scan.pass) throw new Error(`blocked by guardrail: ${scan.detail}`);
+  const scan = (await import('./adlc/guardrails.js')).run(['secret-scan', 'pii-scan'], { text }).find(r => !r.pass);
+  if (scan) throw new Error(`blocked by ${scan.id}: ${scan.detail}`);
   return meko.addMemory(who, text, { kind: req.body.kind || 'note', feature: req.body.feature || '*', stage: 'manual' });
 }));
 app.get('/api/meko/wire', wrap(() => ({ wire: meko.wire, stats: meko.stats })));

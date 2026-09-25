@@ -50,6 +50,10 @@
     }
   ],
   "guardrails": {
+    "pii-scan": {
+      "severity": "block",
+      "description": "No PII or private data (names, emails, phones, national ids, card numbers, addresses, IPs, health or salary data) in any artifact, decision, prompt, memory or PR text. A privacy shield also redacts every outbound payload to Claude, Meko and GitHub (security.md §6)."
+    },
     "spec-frontmatter": {
       "severity": "block",
       "description": "Plan keeps the feature id, owner agent and contract from the spec."

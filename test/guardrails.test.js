@@ -48,3 +48,13 @@ test('syntax-check rejects code that does not parse', () => {
   assert.equal(one('syntax-check', { text: 'export const a = ;' }).pass, false);
   assert.equal(one('syntax-check', { text: 'export const a = 1;' }).pass, true);
 });
+
+test('pii-scan blocks personal data and reports only its type', () => {
+  for (const [bad, type] of [['technician: John Smith', 'PERSON'], ['mail ops.lead@example.org', 'EMAIL'], ['call +91 98765 43210', 'PHONE'], ['SSN 123-45-6789', 'SSN'], ['card 4111 1111 1111 1111', 'CARD']]) {
+    const r = one('pii-scan', { text: bad });
+    assert.equal(r.pass, false, bad);
+    assert.match(r.detail, new RegExp(type));
+    assert.doesNotMatch(r.detail, /John|example\.org|98765|6789|4111/, 'the value itself must never be echoed');
+  }
+  assert.equal(one('pii-scan', { text: 'WO-1001 P1 cavitation on PMP-201 at 2026-09-25T06:00:00Z, vibration 7.4 mm/s' }).pass, true);
+});

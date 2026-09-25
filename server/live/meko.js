@@ -4,6 +4,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { env, emit, state, setState } from '../core.js';
+import { redact, redactDeep } from '../security/privacy.js';
 
 let client = null;
 let connecting = null;
@@ -34,7 +35,10 @@ const MUTATING = /^(memory_add|memory_update|memory_delete|datapack_create|datap
 
 export async function call(tool, args = {}, { agent = 'studio', quiet = false } = {}) {
   const t0 = Date.now();
-  const clean = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined && v !== null && v !== ''));
+  // Privacy shield: every string argument is redacted before it reaches Meko;
+  // artifact bodies are decoded, redacted and re-encoded.
+  const clean = redactDeep(Object.fromEntries(Object.entries(args).filter(([k, v]) => v !== undefined && v !== null && v !== '' && k !== 'content_base64')), 'meko');
+  if (args.content_base64) clean.content_base64 = Buffer.from(redact(Buffer.from(args.content_base64, 'base64').toString('utf8'), 'meko')).toString('base64');
   for (let attempt = 0; ; attempt++) {
     try {
       await ensure();
@@ -143,7 +147,7 @@ export async function logTurn(agentId, input, output, metadata) {
 // Knowledge-base upload is a REST endpoint, not an MCP tool.
 export async function uploadKnowledge(filename, markdown) {
   const form = new FormData();
-  form.append('file', new Blob([markdown], { type: 'text/markdown' }), filename);
+  form.append('file', new Blob([redact(markdown, 'meko')], { type: 'text/markdown' }), filename);
   const t0 = Date.now();
   const r = await fetch(`${env('MEKO_API_URL')}/datapacks/${datapackId()}/knowledge-bases/upload`, { method: 'POST', headers: headers(), body: form });
   record('kb_upload (REST)', { filename }, 'studio', Date.now() - t0, !r.ok, `HTTP ${r.status}`, false);

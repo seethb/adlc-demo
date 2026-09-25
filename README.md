@@ -34,6 +34,13 @@ For every agent step the Studio records:
 - **Baseline input tokens** — what an agent without shared memory must read to make the same decisions: all specs and design docs, the knowledge base, the standards wiki, and every upstream artifact. Measured exactly with Claude `count_tokens`, never sent.
 - **Artifact reuse** — stage outputs are stored in Meko by content hash. A re-run with an unchanged spec reuses them and makes no LLM call.
 
+## Security and privacy guardrails
+- **PII never leaves the system.** A privacy shield (`server/security/privacy.js`) redacts personal data from every outbound payload to Claude, Meko and GitHub. The blocking `pii-scan` guardrail runs at every gate, and team members appear only as pseudonymous ids with roles (`TM-01 · Product owner`).
+- **Secrets:** `secret-scan` covers code, PR text and Meko memories; keys live only in `.env` (gitignored).
+- **IoT/OT:** edge code is read-only towards OT (`ot-write-prohibited`). Every cross-zone link is TLS with certificates (`plaintext-transport`). Telemetry is untrusted input (AC-F02-6).
+- **Data classification (C0–C3), Edge/Cloud residency and transport crypto:** [`specs/02-design/security.md`](specs/02-design/security.md). This is also in Meko, where every agent recalls it.
+- **Agent memory hygiene:** recalled memories are screened for prompt injection and provenance before they reach a prompt.
+
 ## Run it
 ```bash
 cp .env.example .env      # Meko key, Anthropic key; GitHub falls back to `gh auth token`

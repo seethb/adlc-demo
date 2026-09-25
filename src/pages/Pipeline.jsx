@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Play, RotateCcw, GitPullRequest, ExternalLink, CheckCircle2, XCircle, AlertTriangle, Brain, BookOpen, Lightbulb, FileCode2, ShieldCheck, FlaskConical, Rocket, PauseCircle, Recycle, GitCommit, Zap, Clock } from 'lucide-react';
 import { Card, Avatar, StatusBadge, StatusIcon, Badge, Toggle, Drawer, Modal, BarCompare, Markdown, Empty } from '../components/ui.jsx';
 import { post, api, fmt } from '../api.js';
-import { STAGES, agentOf, latestRun } from './Mission.jsx';
+import { STAGES, agentOf, latestRun } from '../lib.js';
 
 const LABEL = { plan: 'Plan', design: 'Design', develop: 'Develop', test: 'Test', review: 'Review', deploy: 'Deploy' };
 

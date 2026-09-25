@@ -2,7 +2,7 @@ import React from 'react';
 import { GitPullRequest, GitMerge, GitBranch, Rocket, PlayCircle, GitCommit, ExternalLink, Github, CheckCircle2, XCircle, Loader2, CircleDot } from 'lucide-react';
 import { Card, Stat, Avatar, Badge, Empty } from '../components/ui.jsx';
 import { fmt } from '../api.js';
-import { agentOf } from './Mission.jsx';
+import { agentOf } from '../lib.js';
 
 const runIcon = r => r.status !== 'completed' ? <Loader2 size={15} className="spin" color="#d97706" /> : r.conclusion === 'success' ? <CheckCircle2 size={15} color="#16a34a" /> : <XCircle size={15} color="#e11d48" />;
 

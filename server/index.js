@@ -116,4 +116,9 @@ if (existsSync(dist)) {
 
 edge.start();
 const port = Number(env('PORT', '8787'));
-app.listen(port, '127.0.0.1', () => console.log(`ADLC Studio API on http://localhost:${port}`));
+app.listen(port, '127.0.0.1', () => console.log(`ADLC Studio API on http://localhost:${port}`))
+  .on('error', e => {
+    if (e.code !== 'EADDRINUSE') throw e;
+    console.error(`\nPort ${port} is already in use — another ADLC Studio API is running.\nStop it (lsof -nP -iTCP:${port} -sTCP:LISTEN, then kill <pid>) or set PORT in .env.\n`);
+    process.exit(1);
+  });

@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Send, Sparkles, Brain, BookOpen, Lock, Gauge, Loader2 } from 'lucide-react';
 import { Card, Badge, BarCompare, Markdown, Avatar } from '../components/ui.jsx';
 import { post, fmt } from '../api.js';
-import { agentOf } from './Mission.jsx';
+import { agentOf } from '../lib.js';
 
 const SUGGESTIONS = [
   'How is motor MTR-101 performing?',

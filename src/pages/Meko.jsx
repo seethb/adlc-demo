@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Search, Brain, BookOpen, Plus, Activity, Database, Timer, ShieldAlert } from 'lucide-react';
 import { Card, Stat, Avatar, Badge, Tabs, Empty } from '../components/ui.jsx';
 import { api, post, fmt } from '../api.js';
-import { agentOf } from './Mission.jsx';
+import { agentOf } from '../lib.js';
 
 const SUGGEST = ['anomaly severity scale and priority mapping', 'does gateway to cloud traffic need certificates', 'PII privacy rules for agents', 'inventory reservation shortfall', 'ISO 10816 vibration zones', 'cavitation symptoms centrifugal pump'];
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { FileText, CheckCircle2, CircleDashed, Rocket, ExternalLink, BookOpen } from 'lucide-react';
 import { Card, Avatar, Badge, Tabs, Markdown, Empty } from '../components/ui.jsx';
 import { api } from '../api.js';
-import { agentOf, latestRun } from './Mission.jsx';
+import { agentOf, latestRun } from '../lib.js';
 
 export default function Specs({ s }) {
   const [sel, setSel] = useState(s.features[0]?.id);

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Brain, ShieldCheck, FlaskConical, FolderLock, Coins, Recycle, PenLine } from 'lucide-react';
 import { Card, Avatar, Badge, Drawer } from '../components/ui.jsx';
 import { fmt } from '../api.js';
-import { agentOf } from './Mission.jsx';
+import { agentOf } from '../lib.js';
 
 export default function Agents({ s }) {
   const [sel, setSel] = useState(null);

@@ -3,7 +3,7 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianG
 import { Activity, Wrench, ClipboardCheck, Package, ShieldAlert, Zap, RotateCcw, CheckCircle2, Truck, Rocket, AlertTriangle, Bug } from 'lucide-react';
 import { Card, Stat, Badge, Sparkline, Drawer, Empty } from '../components/ui.jsx';
 import { post, fmt } from '../api.js';
-import { agentOf } from './Mission.jsx';
+import { agentOf } from '../lib.js';
 
 const zone = v => (v <= 2.8 ? ['A', 'green'] : v <= 4.5 ? ['B', 'blue'] : v <= 7.1 ? ['C', 'amber'] : ['D', 'red']);
 const sevTone = { low: 'blue', medium: 'amber', high: 'red', critical: 'red' };

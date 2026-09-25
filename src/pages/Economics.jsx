@@ -3,7 +3,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGri
 import { Coins, Recycle, Brain, TrendingDown, Calculator, Info } from 'lucide-react';
 import { Card, Stat, Avatar, Badge, BarCompare, Empty } from '../components/ui.jsx';
 import { fmt } from '../api.js';
-import { agentOf } from './Mission.jsx';
+import { agentOf } from '../lib.js';
 
 const tip = { contentStyle: { background: '#ffffff', border: '1px solid rgba(15,23,42,0.12)', boxShadow: '0 8px 24px rgba(15,23,42,0.1)', borderRadius: 12, fontSize: 12 }, labelStyle: { color: '#0f172a' }, cursor: { fill: 'rgba(15,23,42,0.04)' } };
 const ORDER = ['plan', 'design', 'develop', 'review', 'nlq', 'test', 'deploy'];

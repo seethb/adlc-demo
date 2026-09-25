@@ -2,10 +2,8 @@ import React, { useState } from 'react';
 import { Coins, Brain, Rocket, ShieldCheck, Play, GitPullRequest, Github, Zap, Recycle, Lock, ArrowRight, Factory } from 'lucide-react';
 import { Card, Stat, Avatar, StatusIcon, Badge, Sparkline } from '../components/ui.jsx';
 import { post, fmt } from '../api.js';
+import { STAGES, agentOf, latestRun } from '../lib.js';
 
-export const STAGES = ['plan', 'design', 'develop', 'test', 'review', 'deploy'];
-export const agentOf = (s, id) => s.roster?.agents.find(a => a.id === id);
-export const latestRun = (s, fid) => s.runs.find(r => r.feature === fid && r.status !== 'superseded');
 
 export default function Mission({ s, go }) {
   const [busy, setBusy] = useState(false);

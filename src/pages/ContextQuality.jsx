@@ -5,6 +5,31 @@ import { api, post, fmt } from '../api.js';
 
 const RED = '#e5484d', CY = '#06b6d4';
 
+// What each column means — shown above the answer grid and cost bars.
+const LEVEL_HELP = [
+  ['L1', 'Question only', 'no context — the model must guess'],
+  ['L2', '+ relevant spec', 'the one spec that holds the answer'],
+  ['L3', '+ all specs', 'the whole specs/ folder'],
+  ['L4', '+ knowledge & standards', 'plus the team wiki and standards'],
+  ['L5', '+ agent artifacts', 'every plan, design and code file so far'],
+  ['L6', '+ full history', 'run logs, failed attempts, an old spec revision — a long session'],
+  ['Meko', 'Meko recall only', 'just the top memories + knowledge chunks for the question'],
+];
+
+function LevelKey({ tokens }) {
+  return (
+    <div className="cq-key">
+      {LEVEL_HELP.map(([k, t, d], i) => (
+        <div key={k} className={k === 'Meko' ? 'meko' : ''}>
+          <b>{k}</b>
+          <span>{t}</span>
+          <small>{d}{tokens?.[i] ? ` · ≈${fmt.k(tokens[i])} tokens` : ''}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ContextQuality({ s }) {
   const [meta, setMeta] = useState(null);
   const [n, setN] = useState(6);
@@ -50,6 +75,7 @@ export default function ContextQuality({ s }) {
           {res ? (
             <>
               <QualityChart data={chart} peak={peak?.n} />
+              <LevelKey tokens={[...res.levels.map(l => l.tokens), res.meko.tokens]} />
               {res.questions.length < 4 && <div className="dim" style={{ fontSize: 12, marginTop: 6 }}>Only {res.questions.length} question{res.questions.length > 1 ? 's' : ''} in this run — each point is 0 % or 100 %. Run 6 or 12 questions for a real curve.</div>}
             </>
           ) : <Empty icon={<FlaskConical />}>Run the benchmark below to draw this chart from real measurements.</Empty>}
@@ -79,6 +105,7 @@ export default function ContextQuality({ s }) {
 
       {res && (
         <Card title="Every answer, graded" hint="✓ correct · ✗ wrong · ? said unknown — hover for the model’s answer" icon={<CheckCircle2 size={16} color="#16a34a" />}>
+          <LevelKey tokens={[...res.levels.map(l => l.tokens), res.meko.tokens]} />
           <div style={{ overflowX: 'auto' }}>
             <table className="t">
               <thead><tr><th>Question</th><th>Expected</th>{res.levels.map(l => <th key={l.n} style={{ textAlign: 'center' }}>L{l.n}</th>)}<th style={{ textAlign: 'center', color: CY }}>Meko</th></tr></thead>

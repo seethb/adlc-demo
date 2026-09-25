@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LayoutDashboard, GitBranch, Users, Brain, Github, Coins, Factory, MessagesSquare, FileText, ShieldCheck, Network, Cpu, Share2, Sparkles, X, ExternalLink, AlertTriangle, Lock } from 'lucide-react';
+import { LayoutDashboard, GitBranch, Users, Brain, Github, Coins, Factory, MessagesSquare, FileText, ShieldCheck, Network, Cpu, Share2, TrendingDown, Sparkles, X, ExternalLink, AlertTriangle, Lock } from 'lucide-react';
 import { useLive, fmt } from './api.js';
 import Mission from './pages/Mission.jsx';
 import Pipeline from './pages/Pipeline.jsx';
@@ -14,6 +14,7 @@ import Trust from './pages/Trust.jsx';
 import Architecture from './pages/Architecture.jsx';
 import MekoInternals from './pages/MekoInternals.jsx';
 import Handoffs from './pages/Handoffs.jsx';
+import ContextQuality from './pages/ContextQuality.jsx';
 
 const PAGES = [
   { id: 'mission', label: 'Mission Control', icon: LayoutDashboard, group: 'ADLC', sub: 'Ten agents, one shared memory, every gate visible' },
@@ -29,6 +30,7 @@ const PAGES = [
   { id: 'ask', label: 'Ask the Fleet', icon: MessagesSquare, group: 'The product', sub: 'Natural-language asset condition queries' },
   { id: 'meko-internals', label: 'Meko Internals', icon: Cpu, group: 'Under the hood', sub: 'How Meko’s shared memory works — MCP access, scoping, engines and storage' },
   { id: 'handoffs', label: 'Agent Handoffs', icon: Share2, group: 'Under the hood', sub: 'Agent-to-agent communication through Meko shared memory — replay, simulate, live' },
+  { id: 'context-quality', label: 'Context Quality', icon: TrendingDown, group: 'Under the hood', sub: 'Proof: output quality vs context size — context stuffing vs Meko-engineered context' },
 ];
 
 // Keeps one page's crash from blanking the whole Studio.
@@ -81,6 +83,7 @@ export default function App() {
       case 'architecture': return <Architecture {...props} />;
       case 'meko-internals': return <MekoInternals {...props} />;
       case 'handoffs': return <Handoffs {...props} />;
+      case 'context-quality': return <ContextQuality {...props} />;
       default: return <Mission {...props} />;
     }
   })();

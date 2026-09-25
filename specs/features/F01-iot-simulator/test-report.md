@@ -1,6 +1,6 @@
 # F01 test report
 
-Run f01-mugs96pt · 2026-09-25T09:53:55.854Z
+Run f01-mugtcd6t · 25 Sept 2026, 15:55:24 IST
 
 | | Acceptance criterion | Result |
 |---|---|---|

@@ -1,167 +1,171 @@
-// F06 · Natural-language asset queries (NLQ)
-// Pure, read-only, deterministic query planner over in-memory fleet state.
-// Per org security standard, telemetry/metric inputs are treated as untrusted:
-// non-finite values are ignored (never scored, never crash `healthScore`),
-// and only known asset ids / asset types / metrics (from the fleet reference)
-// are ever resolved — unknown tokens are silently dropped rather than guessed.
-// No I/O, no network, no OT writes (edge analytics is read-only towards OT).
-
+// F06 · Natural-language asset queries
+// Pure, side-effect-free query planner + health scoring.
+// Per IoT security standard (OWASP IoT I5): telemetry/metrics passed into
+// healthScore are treated as untrusted input — non-finite values are ignored
+// rather than corrupting the score. This module is strictly read-only
+// towards OT (IEC 62443): it never writes back to the fleet, only reads the
+// in-memory FLEET/ASSET_TYPES reference data (AC-F06-2, AC-F06-4).
 import { FLEET, ASSET_TYPES } from '../../reference/fleet.js';
 
-// ---------------------------------------------------------------------------
-// Lexicons (AC-F06-2, AC-F06-3)
-// ---------------------------------------------------------------------------
+// ---- Lexicons -------------------------------------------------------------
 
-// Known asset types come straight from the fleet reference so the lexicon
-// never drifts from what `resolveAssets` can actually resolve.
-const ASSET_TYPE_LEXICON = Object.keys(ASSET_TYPES).map((type) => ({
-  type,
-  // e.g. "centrifugal pump" -> /centrifugal\s+pumps?\b/i
-  // "centrifugal" alone never matches — the full phrase (incl. "pump"/
-  // "compressor") is required, resolving the pump/compressor ambiguity.
-  re: new RegExp(`\\b${type.replace(/\s+/g, '\\s+')}s?\\b`, 'i'),
-}));
+// Asset type lexicon: longest/most-specific phrases first so "centrifugal
+// pump" / "centrifugal compressor" win over a bare "centrifugal" (AC-F06-2).
+const ASSET_TYPE_LEXICON = [
+  { re: /\bcentrifugal\s+pump(s)?\b/i, type: 'centrifugal pump' },
+  { re: /\bcentrifugal\s+compressor(s)?\b/i, type: 'centrifugal compressor' },
+  { re: /\bmotor(s)?\b/i, type: 'motor' },
+  { re: /\bshaft(s)?\b/i, type: 'shaft' },
+  { re: /\bgearbox(es)?\b/i, type: 'gearbox' },
+];
 
-// metric name -> matcher, ordered from most specific to most generic so that
-// e.g. "bearing temp" is captured before the generic "temperature" catch-all.
-// "cavitation risk" maps to the underlying suctionPressure metric that
-// actually drives cavitation detection on centrifugal pumps (AC-F06-3).
 const METRIC_LEXICON = [
-  ['bearingTemp', /\bbearing\s*temp(erature)?\b/i],
-  ['windingTemp', /\bwinding\s*temp(erature)?\b/i],
-  ['dischargeTemp', /\bdischarge\s*temp(erature)?\b/i],
-  ['surgeMargin', /\bsurge\b/i],
-  ['suctionPressure', /\bcavitation\b|\bsuction\s*pressure\b/i],
-  ['vibration', /\bvibration\b/i],
-  ['pressure', /\bpressure\b/i],
-  ['flow', /\bflow\b/i],
-  ['current', /\bcurrent\b/i],
-  ['rpm', /\brpm\b/i],
-  ['powerFactor', /\bpower\s*factor\b/i],
-  ['temperature', /\btemp(erature)?\b/i],
+  { re: /\bvibration\b/i, metric: 'vibration' },
+  { re: /\bbearing\s*temp(erature)?\b/i, metric: 'bearingTemp' },
+  { re: /\bwinding\s*temp(erature)?\b/i, metric: 'windingTemp' },
+  { re: /\btemp(erature)?\b/i, metric: 'temperature' },
+  // Cavitation risk is diagnosed via suction pressure deviation — surface
+  // both the domain symptom (cavitation) and the underlying metric
+  // (suctionPressure) that a query slice needs (AC-F06-3).
+  { re: /\bcavitat(ion|ing)\b/i, metric: 'suctionPressure' },
+  { re: /\bcavitat(ion|ing)\b/i, metric: 'cavitation' },
+  { re: /\bsuction\s*pressure\b/i, metric: 'suctionPressure' },
+  { re: /\bpressure\b/i, metric: 'pressure' },
+  { re: /\bflow\b/i, metric: 'flow' },
+  { re: /\bcurrent\b/i, metric: 'current' },
+  { re: /\brpm\b/i, metric: 'rpm' },
+  { re: /\bspeed\b/i, metric: 'rpm' },
+  { re: /\bpower\s*factor\b/i, metric: 'powerFactor' },
+  { re: /\bmisalign(ment|ed)?\b/i, metric: 'misalignment' },
+  { re: /\bnoise\b/i, metric: 'noise' },
+  { re: /\btorque\b/i, metric: 'torque' },
+  { re: /\bload\b/i, metric: 'load' },
 ];
 
-// Intent patterns, checked in order — first match wins (AC-F06-1).
+// Ordered intent rules — order matters: anomaly/fault language must win
+// over generic "which ..." ranking language, and trend/time-series phrasing
+// ("for the last N minutes", "over the last N minutes") must win over the
+// generic "condition" fallback (AC-F06-1).
 const INTENT_PATTERNS = [
-  ['work_orders', /\bwork\s*orders?\b/i],
-  ['car', /\bcorrective\s+action\b|\bcars?\b/i],
-  ['inventory', /\b(spare\s*parts?|inventory|stock(?:ed)?|on\s+hand)\b/i],
-  ['anomalies', /\b(anomal(y|ies)|unusual|abnormal|deviat\w*)\b/i],
-  ['ranking', /\b(which|top|worst|rank\w*|best|highest|lowest)\b/i],
-  // "performance" / "trend" / "history" phrasing all indicate a request to
-  // look at a metric over a window, i.e. a trend query.
-  ['trend', /\b(trend\w*|over\s+time|history|historical|past|performance)\b/i],
-  // 'condition' is the deterministic fallback for direct status questions.
+  { intent: 'work_orders', re: /\bwork\s*orders?\b|\bwo\b|\bticket(s)?\b/i },
+  { intent: 'car', re: /\bcorrective\s+action(s)?\b|\bcar\b/i },
+  { intent: 'anomalies', re: /\banomal(y|ies)\b|\brisk\b|\balert(s)?\b|\bfault(s)?\b|\bdeviat|\babnormal|\bfailure|\bcavitat|\bmisalign/i },
+  { intent: 'ranking', re: /\btop\b|\brank(ing)?\b|\bbest\b|\bworst\b|\bwhich .*(most|highest|lowest)\b|\bcompare\b/i },
+  {
+    intent: 'trend',
+    re: /\btrend\b|\bover\s+the\s+last\b|\bhistory\b|\bchange(d)?\s+over\s+time\b|\b(for|over)\s+the\s+last\s+\d+\s*(second|sec|minute|min|hour|hr)/i,
+  },
+  { intent: 'inventory', re: /\bstock\b|\bspare(s)?\b|\binventory\b|\bpart(s)?\b/i },
 ];
 
-const WINDOW_UNIT_SECONDS = { second: 1, minute: 60, hour: 3600, day: 86400 };
-const DEFAULT_WINDOW_SEC = 600;
+// ---- Extraction helpers -----------------------------------------------------
 
-// Set of all known ids for validation (untrusted input: reject unknown ids).
-const KNOWN_IDS = new Set(FLEET.map((a) => a.id.toUpperCase()));
+function extractAssetIds(text) {
+  const re = /\b([A-Z]{2,4})[- ](\d{2,4})\b/g;
+  const out = new Set();
+  let m;
+  const upper = text.toUpperCase();
+  while ((m = re.exec(upper))) {
+    out.add(`${m[1]}-${m[2]}`);
+  }
+  return [...out];
+}
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+function extractAssetTypes(text) {
+  const out = [];
+  for (const { re, type } of ASSET_TYPE_LEXICON) {
+    if (re.test(text) && !out.includes(type)) out.push(type);
+  }
+  return out;
+}
+
+function extractMetrics(text) {
+  const out = [];
+  for (const { re, metric } of METRIC_LEXICON) {
+    if (re.test(text) && !out.includes(metric)) out.push(metric);
+  }
+  return out;
+}
+
+function extractWindow(text) {
+  const m = /\blast\s+(\d+)\s*(second|sec|minute|min|hour|hr)s?\b/i.exec(text);
+  if (!m) return 600;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return 600;
+  const unit = m[2].toLowerCase();
+  if (unit.startsWith('sec')) return n;
+  if (unit.startsWith('min')) return n * 60;
+  if (unit.startsWith('hour') || unit.startsWith('hr')) return n * 3600;
+  return 600;
+}
 
 function classifyIntent(text) {
-  for (const [intent, re] of INTENT_PATTERNS) {
+  for (const { intent, re } of INTENT_PATTERNS) {
     if (re.test(text)) return intent;
   }
   return 'condition';
 }
 
-function extractAssetIds(text) {
-  const found = [];
-  const re = /\b([A-Za-z]{2,5})[\s-](\d{2,4})\b/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const id = `${m[1].toUpperCase()}-${m[2]}`;
-    if (KNOWN_IDS.has(id) && !found.includes(id)) found.push(id);
-  }
-  return found;
-}
-
-function extractAssetTypes(text) {
-  const found = [];
-  for (const { type, re } of ASSET_TYPE_LEXICON) {
-    if (re.test(text) && !found.includes(type)) found.push(type);
-  }
-  return found;
-}
-
-function extractMetrics(text) {
-  const found = [];
-  for (const [metric, re] of METRIC_LEXICON) {
-    if (re.test(text) && !found.includes(metric)) found.push(metric);
-  }
-  return found;
-}
-
-function extractWindow(text) {
-  const m = /\blast\s+(\d+)\s*(second|minute|hour|day)s?\b/i.exec(text);
-  if (!m) return DEFAULT_WINDOW_SEC;
-  const n = Number(m[1]);
-  const unitSec = WINDOW_UNIT_SECONDS[m[2].toLowerCase()];
-  if (!Number.isFinite(n) || !unitSec) return DEFAULT_WINDOW_SEC;
-  return n * unitSec;
+// Case-insensitive, direction-agnostic match between an extracted type
+// phrase (e.g. "centrifugal pump") and a fleet asset's recorded type
+// string, tolerating case or label/key spelling differences between the
+// reference fleet data and the lexicon (AC-F06-2).
+function typeMatches(extractedType, fleetType) {
+  if (!fleetType) return false;
+  const a = String(extractedType).toLowerCase().trim();
+  const b = String(fleetType).toLowerCase().trim();
+  if (a === b) return true;
+  return a.includes(b) || b.includes(a);
 }
 
 function resolveAssets(assetIds, assetTypes) {
-  const resolved = [];
+  const out = [];
   const seen = new Set();
-  const add = (a) => {
-    if (!seen.has(a.id)) {
+  const idsUpper = assetIds.map((i) => i.toUpperCase());
+  for (const a of FLEET) {
+    const matchesId = idsUpper.includes(String(a.id).toUpperCase());
+    const matchesType = assetTypes.some((t) => typeMatches(t, a.type));
+    if ((matchesId || matchesType) && !seen.has(a.id)) {
       seen.add(a.id);
-      resolved.push({ id: a.id, type: a.type });
-    }
-  };
-  for (const id of assetIds) {
-    const a = FLEET.find((f) => f.id === id);
-    if (a) add(a);
-  }
-  for (const type of assetTypes) {
-    for (const a of FLEET) {
-      if (a.type === type) add(a);
+      out.push({ id: a.id, type: a.type });
     }
   }
-  return resolved;
+  return out;
 }
 
-function deviationPenalty(value, mean, sigma) {
-  // Untrusted input hardening: non-finite readings never corrupt scoring.
-  if (!Number.isFinite(value) || !Number.isFinite(mean) || !Number.isFinite(sigma) || sigma <= 0) {
-    return 0;
-  }
-  const z = Math.abs(value - mean) / sigma;
-  if (z <= 1) return 0;
-  return (z - 1) * 25;
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+// ---- Public API -------------------------------------------------------------
 
 export function parseQuery(text) {
-  const q = String(text ?? '');
-  const intent = classifyIntent(q);
-  const assetIds = extractAssetIds(q);
-  const assetTypes = extractAssetTypes(q);
-  const metrics = extractMetrics(q);
-  const windowSec = extractWindow(q);
+  const safeText = typeof text === 'string' ? text : '';
+  const intent = classifyIntent(safeText);
+  const assetIds = extractAssetIds(safeText);
+  const assetTypes = extractAssetTypes(safeText);
+  const metrics = extractMetrics(safeText);
+  const windowSec = extractWindow(safeText);
   const resolvedAssets = resolveAssets(assetIds, assetTypes);
   return { intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets };
 }
 
+// Pure deviation-based penalty: severe deviations (large z-score) saturate
+// quickly so a single badly-off metric is enough to push health well below
+// the 50 threshold (AC-F06-4), while nominal metrics contribute ~0.
+function deviationPenalty(value, mean, sigma) {
+  if (!Number.isFinite(value) || !Number.isFinite(mean) || !Number.isFinite(sigma) || sigma <= 0) return 0;
+  const z = Math.abs(value - mean) / sigma;
+  return Math.min(100, z * z * 5);
+}
+
 export function healthScore(assetType, metrics) {
-  const def = ASSET_TYPES[assetType];
-  if (!def || !def.nominal || typeof metrics !== 'object' || metrics === null) return 100;
+  const spec = ASSET_TYPES?.[assetType];
+  if (!spec || !spec.nominal || typeof metrics !== 'object' || metrics === null) return 100;
   let penalty = 0;
-  for (const [metric, [mean, sigma]] of Object.entries(def.nominal)) {
+  for (const [metric, [mean, sigma]] of Object.entries(spec.nominal)) {
     const value = metrics[metric];
     if (value === undefined) continue;
+    // Untrusted-input guard (AC-F02-6 style discipline): ignore non-finite
+    // readings rather than letting them corrupt the score.
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
     penalty += deviationPenalty(value, mean, sigma);
   }
-  const score = 100 - penalty;
-  return Math.max(0, Math.min(100, score));
+  return Math.max(0, Math.min(100, 100 - penalty));
 }

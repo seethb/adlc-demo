@@ -9,7 +9,7 @@ export function AgentIcon({ agent, size = 16 }) {
 }
 
 export function Avatar({ agent, size = '', busy = false }) {
-  if (!agent) return <div className={`avatar ${size}`} style={{ background: '#334' }}>?</div>;
+  if (!agent) return <div className={`avatar ${size}`} style={{ background: '#cbd5e1' }}>?</div>;
   const px = size === 'lg' ? 22 : size === 'sm' ? 12 : 16;
   return (
     <div className={`avatar ${size} ${busy ? 'busy' : ''}`} title={`${agent.name} · ${agent.role}`}
@@ -130,7 +130,7 @@ export function BarCompare({ baseline, meko, labelBase = 'Without Meko', labelMe
     <div className="bar-compare">
       <div className="row between" style={{ fontSize: 12 }}><span className="muted">{labelBase}</span><span className="mono">{Math.round(baseline).toLocaleString()} {unit}</span></div>
       <div className="b base"><span style={{ width: `${(baseline / max) * 100}%` }} /></div>
-      <div className="row between" style={{ fontSize: 12, marginTop: 4 }}><span style={{ color: '#c4b5fd' }}>{labelMeko}</span><span className="mono">{Math.round(meko).toLocaleString()} {unit}</span></div>
+      <div className="row between" style={{ fontSize: 12, marginTop: 4 }}><span style={{ color: '#7c3aed' }}>{labelMeko}</span><span className="mono">{Math.round(meko).toLocaleString()} {unit}</span></div>
       <div className="b meko"><span style={{ width: `${(meko / max) * 100}%` }} /></div>
     </div>
   );

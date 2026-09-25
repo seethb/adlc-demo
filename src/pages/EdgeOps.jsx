@@ -38,11 +38,11 @@ export default function EdgeOps({ s }) {
       </Card>
 
       <div className="grid g5">
-        <Stat label="Fleet health" icon={<Activity size={14} color="#86efac" />} value={`${Math.round(ed.assets.reduce((n, a) => n + a.health, 0) / ed.assets.length)}`} foot={`${ed.assets.filter(a => a.health < 70).length} assets degraded · tick ${ed.tick}`} spark={ed.assets[0]?.history?.map(h => h.vibration)} sparkColor="#22c55e" />
-        <Stat label="Anomalies" icon={<Zap size={14} color="#fcd34d" />} value={ed.anomalies.length} foot={`${ed.anomalies.filter(a => a.severity === 'critical').length} critical in window`} />
-        <Stat label="Open work orders" icon={<Wrench size={14} color="#fdba74" />} value={openWos.length} foot={`${openWos.filter(w => w.priority === 'P1').length} P1 · ${openWos.filter(w => w.status === 'waiting_parts').length} waiting parts`} />
-        <Stat label="Corrective actions" icon={<ClipboardCheck size={14} color="#f0abfc" />} value={ed.cars.length} foot="8D reports opened" />
-        <Stat label="Rejected telemetry" icon={<ShieldAlert size={14} color="#fda4af" />} value={ed.security?.rejectedReadings ?? 0} foot="tampered or invalid readings blocked" />
+        <Stat label="Fleet health" icon={<Activity size={14} color="#16a34a" />} value={`${Math.round(ed.assets.reduce((n, a) => n + a.health, 0) / ed.assets.length)}`} foot={`${ed.assets.filter(a => a.health < 70).length} assets degraded · tick ${ed.tick}`} spark={ed.assets[0]?.history?.map(h => h.vibration)} sparkColor="#22c55e" />
+        <Stat label="Anomalies" icon={<Zap size={14} color="#d97706" />} value={ed.anomalies.length} foot={`${ed.anomalies.filter(a => a.severity === 'critical').length} critical in window`} />
+        <Stat label="Open work orders" icon={<Wrench size={14} color="#ea580c" />} value={openWos.length} foot={`${openWos.filter(w => w.priority === 'P1').length} P1 · ${openWos.filter(w => w.status === 'waiting_parts').length} waiting parts`} />
+        <Stat label="Corrective actions" icon={<ClipboardCheck size={14} color="#c026d3" />} value={ed.cars.length} foot="8D reports opened" />
+        <Stat label="Rejected telemetry" icon={<ShieldAlert size={14} color="#e11d48" />} value={ed.security?.rejectedReadings ?? 0} foot="tampered or invalid readings blocked" />
       </div>
 
       <Card title="Fleet" hint="live at 1 Hz — click an asset to inspect, inject a fault or send a tampered reading" right={<button className="btn sm" onClick={() => post('/edge/reset', {})}><RotateCcw size={13} />Reset plant</button>}>
@@ -67,7 +67,7 @@ export default function EdgeOps({ s }) {
       </Card>
 
       <div className="grid g-3-2">
-        <Card title="Work orders" hint="raised by F03 from anomalies — de-duplicated, prioritised, parts reserved" icon={<Wrench size={16} color="#fdba74" />}>
+        <Card title="Work orders" hint="raised by F03 from anomalies — de-duplicated, prioritised, parts reserved" icon={<Wrench size={16} color="#ea580c" />}>
           <div style={{ maxHeight: 380, overflow: 'auto' }}>
             <table className="t">
               <thead><tr><th>WO</th><th>Asset · failure mode</th><th>Priority</th><th>Parts</th><th className="num">Seen</th><th>Status</th><th /></tr></thead>
@@ -88,7 +88,7 @@ export default function EdgeOps({ s }) {
             {!ed.workOrders.length && <Empty icon={<Wrench />}>No work orders — inject a fault on an asset.</Empty>}
           </div>
         </Card>
-        <Card title="Anomaly stream" hint="F02 · baseline z-score + ISO 10816 + OEM limits" icon={<Zap size={16} color="#fcd34d" />}>
+        <Card title="Anomaly stream" hint="F02 · baseline z-score + ISO 10816 + OEM limits" icon={<Zap size={16} color="#d97706" />}>
           <div className="feed" style={{ maxHeight: 380 }}>
             {ed.anomalies.slice(0, 40).map(a => (
               <div className="feed-item" key={a.id}>
@@ -103,7 +103,7 @@ export default function EdgeOps({ s }) {
       </div>
 
       <div className="grid g3">
-        <Card title="Corrective Action Reports" hint="F04 · 8D" icon={<ClipboardCheck size={16} color="#f0abfc" />}>
+        <Card title="Corrective Action Reports" hint="F04 · 8D" icon={<ClipboardCheck size={16} color="#c026d3" />}>
           <div className="col" style={{ maxHeight: 420, overflow: 'auto' }}>
             {ed.cars.map(c => (
               <div key={c.id} className="mem">
@@ -117,7 +117,7 @@ export default function EdgeOps({ s }) {
             {!ed.cars.length && <Empty>No CARs — a P1 or a recurring failure opens one.</Empty>}
           </div>
         </Card>
-        <Card title="Spare parts" hint="F05 · reservations and reorder" icon={<Package size={16} color="#93c5fd" />}>
+        <Card title="Spare parts" hint="F05 · reservations and reorder" icon={<Package size={16} color="#2563eb" />}>
           <div style={{ maxHeight: 420, overflow: 'auto' }}>
             <table className="t">
               <thead><tr><th>SKU</th><th className="num">On hand</th><th className="num">Reserved</th><th className="num">Avail</th></tr></thead>
@@ -125,14 +125,14 @@ export default function EdgeOps({ s }) {
             </table>
           </div>
         </Card>
-        <Card title="Purchase requisitions & security" icon={<Truck size={16} color="#67e8f9" />}>
+        <Card title="Purchase requisitions & security" icon={<Truck size={16} color="#0891b2" />}>
           <div className="col">
             {ed.requisitions.map(r => (
               <div key={r.id} className="row" style={{ fontSize: 12.5 }}><span className="mono">{r.id}</span><span>{r.sku} × {r.qty}</span><span className="dim">ETA {r.etaDays}d</span><span style={{ marginLeft: 'auto' }}>{r.status === 'open' ? <button className="btn sm" onClick={() => post(`/edge/req/${r.id}/receive`, {})}>Receive</button> : <Badge tone="green">received</Badge>}</span></div>
             ))}
             {!ed.requisitions.length && <span className="dim" style={{ fontSize: 12.5 }}>No requisitions — stock above reorder points ({low.length} low).</span>}
             <div className="divider" />
-            <div className="row"><ShieldAlert size={15} color="#fda4af" /><b style={{ fontSize: 13 }}>Telemetry security</b></div>
+            <div className="row"><ShieldAlert size={15} color="#e11d48" /><b style={{ fontSize: 13 }}>Telemetry security</b></div>
             {(ed.security?.events ?? []).slice(0, 6).map((e, i) => <div key={i} className="dim" style={{ fontSize: 12 }}>{e.at.slice(11, 19)} · {e.text}</div>)}
             {!ed.security?.events?.length && <span className="dim" style={{ fontSize: 12 }}>No tampered readings yet — try “Send tampered reading” on an asset.</span>}
           </div>
@@ -144,7 +144,7 @@ export default function EdgeOps({ s }) {
   );
 }
 
-const COLORS = ['#a78bfa', '#22d3ee', '#4ade80', '#fbbf24', '#f472b6', '#60a5fa'];
+const COLORS = ['#7c3aed', '#22d3ee', '#4ade80', '#fbbf24', '#f472b6', '#60a5fa'];
 const LIMITS = { vibration: [4.5, 7.1], bearingTemp: [85, 95], windingTemp: [110, 130], surgeMargin: [10, 5], suctionPressure: [0.9, 0.6], misalignment: [0.1, 0.2], particleCount: [30, 45], oilTemp: [80, 90] };
 
 function AssetDrawer({ s, id, onClose }) {
@@ -156,24 +156,24 @@ function AssetDrawer({ s, id, onClose }) {
   const metrics = Object.keys(a.metrics);
   return (
     <Drawer open onClose={onClose} title={`${a.id} · ${a.name}`} subtitle={`${a.typeLabel} · ${a.line} · criticality ${a.criticality}`} icon={<div className="hp" style={{ fontSize: 30, fontWeight: 800, color: hColor(a.health) }}>{a.health}</div>}>
-      <Card title="Inject a fault" hint="the simulator degrades the signature metrics; watch detection → WO → CAR" icon={<Bug size={16} color="#fda4af" />}>
+      <Card title="Inject a fault" hint="the simulator degrades the signature metrics; watch detection → WO → CAR" icon={<Bug size={16} color="#e11d48" />}>
         <div className="row wrap">
           {faults.map(([k, f]) => <button key={k} className="btn sm" onClick={() => act('/edge/inject', { assetId: a.id, fault: k }, `${f.label} injected on ${a.id}`)}><Zap size={12} />{f.label}</button>)}
           <button className="btn sm" onClick={() => act('/edge/clear', { assetId: a.id }, `Fault cleared on ${a.id}`)}><RotateCcw size={12} />Clear</button>
           <button className="btn sm danger" onClick={() => act('/edge/tamper', { assetId: a.id }, 'Tampered reading sent — it should be rejected, with no anomaly and no WO')}><ShieldAlert size={12} />Send tampered reading</button>
         </div>
         {msg && <div className={`badge ${msg.ok ? 'b-green' : 'b-red'}`} style={{ marginTop: 10, whiteSpace: 'normal', padding: '6px 10px' }}>{msg.text}</div>}
-        {a.fault && <div className="row" style={{ marginTop: 10 }}><AlertTriangle size={14} color="#fcd34d" /><span>Active fault: <b>{a.fault.replace(/_/g, ' ')}</b> for {a.faultTicks} s</span></div>}
+        {a.fault && <div className="row" style={{ marginTop: 10 }}><AlertTriangle size={14} color="#d97706" /><span>Active fault: <b>{a.fault.replace(/_/g, ' ')}</b> for {a.faultTicks} s</span></div>}
       </Card>
       <div className="grid g2">
         {metrics.map((m, i) => (
           <Card key={m} title={s.edge.catalog?.metrics?.[m]?.label ?? m} hint={`${a.metrics[m]} ${s.edge.catalog?.metrics?.[m]?.unit ?? ''}`}>
             <ResponsiveContainer width="100%" height={140}>
               <LineChart data={a.history}>
-                <CartesianGrid stroke="rgba(148,163,255,0.07)" vertical={false} />
+                <CartesianGrid stroke="rgba(15,23,42,0.06)" vertical={false} />
                 <XAxis dataKey="ts" hide />
-                <YAxis domain={['auto', 'auto']} stroke="#6b7399" fontSize={10} width={44} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: '#121628', border: '1px solid rgba(148,163,255,0.28)', borderRadius: 10, fontSize: 12 }} labelFormatter={v => String(v).slice(11, 19)} />
+                <YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} width={44} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid rgba(15,23,42,0.12)', boxShadow: '0 8px 24px rgba(15,23,42,0.1)', borderRadius: 10, fontSize: 12 }} labelFormatter={v => String(v).slice(11, 19)} />
                 {LIMITS[m] && <ReferenceLine y={LIMITS[m][0]} stroke="#f59e0b" strokeDasharray="4 4" />}
                 {LIMITS[m] && <ReferenceLine y={LIMITS[m][1]} stroke="#f43f5e" strokeDasharray="4 4" />}
                 <Line type="monotone" dataKey={m} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={2} isAnimationActive={false} />

@@ -4,7 +4,7 @@ import { Card, Stat, Avatar, Badge, Empty } from '../components/ui.jsx';
 import { fmt } from '../api.js';
 import { agentOf } from './Mission.jsx';
 
-const runIcon = r => r.status !== 'completed' ? <Loader2 size={15} className="spin" color="#fcd34d" /> : r.conclusion === 'success' ? <CheckCircle2 size={15} color="#86efac" /> : <XCircle size={15} color="#fda4af" />;
+const runIcon = r => r.status !== 'completed' ? <Loader2 size={15} className="spin" color="#d97706" /> : r.conclusion === 'success' ? <CheckCircle2 size={15} color="#16a34a" /> : <XCircle size={15} color="#e11d48" />;
 
 export default function GitHubPage({ s }) {
   const g = s.github?.snapshot;
@@ -27,11 +27,11 @@ export default function GitHubPage({ s }) {
       </div>
 
       <div className="grid g5">
-        <Stat label="Open PRs" icon={<GitPullRequest size={14} color="#86efac" />} value={g.pulls.filter(p => p.state === 'open').length} />
-        <Stat label="Merged by Helm" icon={<GitMerge size={14} color="#c4b5fd" />} value={g.pulls.filter(p => p.state === 'merged').length} />
-        <Stat label="Branches" icon={<GitBranch size={14} color="#67e8f9" />} value={g.branches.length} foot={`${g.branches.filter(b => b.startsWith('adlc/')).length} agent branches`} />
-        <Stat label="Actions runs" icon={<PlayCircle size={14} color="#fcd34d" />} value={g.runs.length} foot={`${g.runs.filter(r => r.conclusion === 'success').length} green`} />
-        <Stat label="Deployments" icon={<Rocket size={14} color="#f0abfc" />} value={g.deployments.length} foot="environment edge-staging" />
+        <Stat label="Open PRs" icon={<GitPullRequest size={14} color="#16a34a" />} value={g.pulls.filter(p => p.state === 'open').length} />
+        <Stat label="Merged by Helm" icon={<GitMerge size={14} color="#7c3aed" />} value={g.pulls.filter(p => p.state === 'merged').length} />
+        <Stat label="Branches" icon={<GitBranch size={14} color="#0891b2" />} value={g.branches.length} foot={`${g.branches.filter(b => b.startsWith('adlc/')).length} agent branches`} />
+        <Stat label="Actions runs" icon={<PlayCircle size={14} color="#d97706" />} value={g.runs.length} foot={`${g.runs.filter(r => r.conclusion === 'success').length} green`} />
+        <Stat label="Deployments" icon={<Rocket size={14} color="#c026d3" />} value={g.deployments.length} foot="environment edge-staging" />
       </div>
 
       <div className="grid g-3-2">
@@ -43,7 +43,7 @@ export default function GitHubPage({ s }) {
                 const r = runByPr[p.number];
                 return (
                   <tr key={p.number}>
-                    <td><a href={p.url} target="_blank" rel="noreferrer" className="row" style={{ gap: 6 }}>{p.state === 'merged' ? <GitMerge size={15} color="#c4b5fd" /> : p.state === 'open' ? <GitPullRequest size={15} color="#86efac" /> : <CircleDot size={15} color="#fda4af" />}<b>#{p.number}</b></a></td>
+                    <td><a href={p.url} target="_blank" rel="noreferrer" className="row" style={{ gap: 6 }}>{p.state === 'merged' ? <GitMerge size={15} color="#7c3aed" /> : p.state === 'open' ? <GitPullRequest size={15} color="#16a34a" /> : <CircleDot size={15} color="#e11d48" />}<b>#{p.number}</b></a></td>
                     <td><div style={{ fontWeight: 600 }}>{p.title}</div><div className="row wrap" style={{ gap: 4, marginTop: 3 }}>{p.labels.map(l => <Badge key={l} tone={l.startsWith('stage') ? 'violet' : l.includes('deployed') ? 'pink' : 'gray'}>{l}</Badge>)}</div></td>
                     <td><div className="row wrap" style={{ gap: 4 }}>{r ? Object.entries(r.statuses ?? {}).map(([k, v]) => <Badge key={k} tone={v.state === 'success' ? 'green' : v.state === 'failure' ? 'red' : 'amber'} title={v.description}>{k.replace('adlc/', '')}</Badge>) : <span className="dim">—</span>}</div></td>
                     <td className="dim" style={{ fontSize: 12 }}>{fmt.ago(p.updated)}</td>
@@ -74,13 +74,13 @@ export default function GitHubPage({ s }) {
             {g.commits.map(c => { const a = agentFromCommit(c.author); return (
               <a key={c.sha} className="feed-item" href={c.url} target="_blank" rel="noreferrer">
                 {a ? <Avatar agent={a} size="sm" /> : <GitCommit size={15} className="dim" />}
-                <div className="main-t"><span className="mono" style={{ color: '#c4b5fd' }}>{c.sha.slice(0, 7)}</span> {c.message}</div>
+                <div className="main-t"><span className="mono" style={{ color: '#7c3aed' }}>{c.sha.slice(0, 7)}</span> {c.message}</div>
                 <span className="t">{fmt.ago(c.date)}</span>
               </a>
             ); })}
           </div>
         </Card>
-        <Card title="GitHub Actions" hint="adlc-ci re-runs spec lint, tests, evals and scans" icon={<PlayCircle size={16} color="#fcd34d" />}>
+        <Card title="GitHub Actions" hint="adlc-ci re-runs spec lint, tests, evals and scans" icon={<PlayCircle size={16} color="#d97706" />}>
           <div className="feed" style={{ maxHeight: 380 }}>
             {g.runs.map(r => (
               <a key={r.id} className="feed-item" href={r.url} target="_blank" rel="noreferrer">
@@ -92,11 +92,11 @@ export default function GitHubPage({ s }) {
             {!g.runs.length && <Empty>No workflow runs yet.</Empty>}
           </div>
         </Card>
-        <Card title="Deployments · edge-staging" icon={<Rocket size={16} color="#f0abfc" />}>
+        <Card title="Deployments · edge-staging" icon={<Rocket size={16} color="#c026d3" />}>
           <div className="feed" style={{ maxHeight: 380 }}>
             {g.deployments.map(d => (
               <div key={d.id} className="feed-item">
-                <Rocket size={15} color="#f0abfc" />
+                <Rocket size={15} color="#c026d3" />
                 <div className="main-t">{d.description} <span className="mono dim" style={{ fontSize: 11 }}>{d.sha.slice(0, 7)}</span></div>
                 <span className="t">{fmt.ago(d.created)}</span>
               </div>

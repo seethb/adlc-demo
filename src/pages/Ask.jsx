@@ -40,7 +40,7 @@ export default function Ask({ s }) {
         <div className="chat" style={{ minHeight: 380, maxHeight: 'calc(100vh - 330px)', overflowY: 'auto', padding: '4px 2px 12px' }}>
           {!thread.length && (
             <div className="empty" style={{ padding: '40px 10px' }}>
-              <Sparkles size={28} color="#a78bfa" />
+              <Sparkles size={28} color="#7c3aed" />
               <div style={{ fontSize: 15, color: 'var(--text)', fontWeight: 650 }}>Ask about any asset's condition in plain language</div>
               <div className="row wrap" style={{ justifyContent: 'center', gap: 8, maxWidth: 640 }}>{SUGGESTIONS.map(x => <span key={x} className="chip" onClick={() => ask(x)}>{x}</span>)}</div>
             </div>
@@ -71,13 +71,13 @@ export default function Ask({ s }) {
       </Card>
 
       <div className="col" style={{ gap: 18 }}>
-        <Card title="Token cost of the last answer" icon={<Gauge size={16} color="#86efac" />}>
+        <Card title="Token cost of the last answer" icon={<Gauge size={16} color="#16a34a" />}>
           {last ? <>
             <BarCompare baseline={last.tokens.baseline} meko={last.tokens.meko} labelBase="Without Meko (whole fleet dump + every knowledge doc)" labelMeko="With Meko (query-planned slice + recalled knowledge)" />
             <div className="row between" style={{ marginTop: 12, fontSize: 12.5 }}><span className="muted">Cost</span><span className="mono">{fmt.usd(last.tokens.costMeko)} <span className="dim">vs {fmt.usd(last.tokens.costBaseline)}</span></span></div>
           </> : <div className="dim">Ask a question to see the comparison.</div>}
         </Card>
-        <Card title="Grounding" hint="what Sage was given" icon={<Brain size={16} color="#a78bfa" />}>
+        <Card title="Grounding" hint="what Sage was given" icon={<Brain size={16} color="#7c3aed" />}>
           {last ? (
             <div className="col">
               <div className="dim" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em' }}>LIVE FACTS</div>

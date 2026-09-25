@@ -108,7 +108,7 @@ export default function App() {
       <div className="toasts">
         {s.toasts.map(t => (
           <div className="toast" key={t.id}>
-            {t.kind === 'github' ? <Github size={16} /> : t.kind === 'security' ? <ShieldCheck size={16} color="#fda4af" /> : <AlertTriangle size={16} color="#fcd34d" />}
+            {t.kind === 'github' ? <Github size={16} /> : t.kind === 'security' ? <ShieldCheck size={16} color="#e11d48" /> : <AlertTriangle size={16} color="#d97706" />}
             <div style={{ flex: 1, minWidth: 0 }}>{t.url ? <a href={t.url} target="_blank" rel="noreferrer">{t.title}</a> : t.title}</div>
             <button className="btn ghost sm" onClick={() => dispatch({ type: 'untoast', id: t.id })}><X size={13} /></button>
           </div>
@@ -122,8 +122,8 @@ function HealthPills({ s }) {
   const e = s.economics?.totals;
   return (
     <div className="row">
-      {e && e.tokensSaved > 0 && <span className="health-pill" style={{ borderColor: 'rgba(139,92,246,0.4)' }}><Coins size={13} color="#c4b5fd" />saved <b className="grad-text">{fmt.k(e.tokensSaved)} tokens</b></span>}
-      <span className="health-pill"><span className="dot live" style={{ background: '#a78bfa' }} />Meko <b>{s.meko?.stats?.calls ?? 0} calls</b></span>
+      {e && e.tokensSaved > 0 && <span className="health-pill" style={{ borderColor: '#ddd6fe' }}><Coins size={13} color="#7c3aed" />saved <b className="grad-text">{fmt.k(e.tokensSaved)} tokens</b></span>}
+      <span className="health-pill"><span className="dot live" style={{ background: '#7c3aed' }} />Meko <b>{s.meko?.stats?.calls ?? 0} calls</b></span>
       <span className="health-pill"><span className={`dot ${s.github?.snapshot ? 'live' : 'off'}`} />GitHub <b>{s.github?.snapshot?.pulls?.length ?? 0} PRs</b></span>
       <span className="health-pill"><span className={`dot ${s.claude?.enabled ? 'live' : 'off'}`} style={{ background: '#f59e0b' }} /><b>{s.claude?.model}</b></span>
     </div>

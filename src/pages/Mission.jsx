@@ -32,11 +32,11 @@ export default function Mission({ s, go }) {
       </div>
 
       <div className="grid g5">
-        <Stat label="Tokens saved by Meko" icon={<Coins size={14} color="#c4b5fd" />} value={<span className="grad-text">{fmt.k(e.tokensSaved ?? 0)}</span>} foot={`${fmt.pct(e.savedPct)} fewer than memory-less agents`} spark={tl.map(t => t.baseline - t.meko)} />
-        <Stat label="LLM spend avoided" icon={<Coins size={14} color="#86efac" />} value={fmt.usd(e.costSaved ?? 0)} foot={`${fmt.usd(e.costMeko)} spent vs ${fmt.usd(e.costBaseline)} baseline`} sparkColor="#22c55e" spark={tl.map(t => t.baseline)} />
-        <Stat label="Cross-agent memory reuse" icon={<Recycle size={14} color="#67e8f9" />} value={fmt.n(e.crossAgentReuse ?? 0)} foot={`${fmt.n(e.memoriesWritten)} written · ${fmt.n(e.reusedArtifacts)} artifacts reused`} sparkColor="#06b6d4" />
-        <Stat label="Gates passed" icon={<ShieldCheck size={14} color="#86efac" />} value={`${passed}/${decided || 0}`} foot="guardrails + evals on every stage" />
-        <Stat label="Features in edge-staging" icon={<Rocket size={14} color="#f0abfc" />} value={`${deployed}/6`} foot={deployed ? `latest ${Object.values(s.deployments).sort((a, b) => b.at.localeCompare(a.at))[0]?.at.slice(11, 16)} UTC` : 'waiting for first release'} />
+        <Stat label="Tokens saved by Meko" icon={<Coins size={14} color="#7c3aed" />} value={<span className="grad-text">{fmt.k(e.tokensSaved ?? 0)}</span>} foot={`${fmt.pct(e.savedPct)} fewer than memory-less agents`} spark={tl.map(t => t.baseline - t.meko)} />
+        <Stat label="LLM spend avoided" icon={<Coins size={14} color="#16a34a" />} value={fmt.usd(e.costSaved ?? 0)} foot={`${fmt.usd(e.costMeko)} spent vs ${fmt.usd(e.costBaseline)} baseline`} sparkColor="#22c55e" spark={tl.map(t => t.baseline)} />
+        <Stat label="Cross-agent memory reuse" icon={<Recycle size={14} color="#0891b2" />} value={fmt.n(e.crossAgentReuse ?? 0)} foot={`${fmt.n(e.memoriesWritten)} written · ${fmt.n(e.reusedArtifacts)} artifacts reused`} sparkColor="#06b6d4" />
+        <Stat label="Gates passed" icon={<ShieldCheck size={14} color="#16a34a" />} value={`${passed}/${decided || 0}`} foot="guardrails + evals on every stage" />
+        <Stat label="Features in edge-staging" icon={<Rocket size={14} color="#c026d3" />} value={`${deployed}/6`} foot={deployed ? `latest ${Object.values(s.deployments).sort((a, b) => b.at.localeCompare(a.at))[0]?.at.slice(11, 16)} UTC` : 'waiting for first release'} />
       </div>
 
       <div className="grid g-3-2">
@@ -51,7 +51,7 @@ export default function Mission({ s, go }) {
                   <tr key={f.id} style={{ cursor: 'pointer' }} onClick={() => go('pipeline')}>
                     <td><div className="row"><Avatar agent={agentOf(s, f.owner)} size="sm" /><div><div style={{ fontWeight: 650 }}>{f.title}</div><div className="dim mono" style={{ fontSize: 10.5 }}>{f.id}{s.deployments?.[f.id] ? ' · deployed' : ''}</div></div></div></td>
                     {STAGES.map(st => <td key={st} style={{ textAlign: 'center' }}><StatusIcon status={r?.stages[st]?.status ?? 'pending'} size={16} /></td>)}
-                    <td className="num mono" style={{ fontSize: 11.5 }}>{tok && tok.b ? <><span style={{ color: '#c4b5fd' }}>{fmt.k(tok.m)}</span> / <span className="dim">{fmt.k(tok.b)}</span></> : <span className="dim">—</span>}</td>
+                    <td className="num mono" style={{ fontSize: 11.5 }}>{tok && tok.b ? <><span style={{ color: '#7c3aed' }}>{fmt.k(tok.m)}</span> / <span className="dim">{fmt.k(tok.b)}</span></> : <span className="dim">—</span>}</td>
                   </tr>
                 );
               })}
@@ -65,7 +65,7 @@ export default function Mission({ s, go }) {
               const busy = l?.phase === 'start';
               const running = s.runs.some(r => r.status === 'running' && Object.values(r.stages).some(x => x.status === 'running' && x.agent === a.id));
               return (
-                <div key={a.id} className="row" style={{ padding: '8px 10px', borderRadius: 12, border: '1px solid var(--line)', background: busy || running ? 'rgba(139,92,246,0.1)' : 'transparent' }}>
+                <div key={a.id} className="row" style={{ padding: '8px 10px', borderRadius: 12, border: '1px solid var(--line)', background: busy || running ? '#f5f3ff' : 'var(--surface)' }}>
                   <Avatar agent={a} size="sm" busy={busy || running} />
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 650, fontSize: 12.5 }}>{a.name} <span className="dim" style={{ fontWeight: 500 }}>· {a.owner}</span></div>
@@ -79,12 +79,12 @@ export default function Mission({ s, go }) {
       </div>
 
       <div className="grid g3">
-        <Card title="Meko wire" hint="real MCP calls" icon={<Brain size={16} color="#a78bfa" />} right={<button className="btn sm" onClick={() => go('meko')}>Open</button>}>
+        <Card title="Meko wire" hint="real MCP calls" icon={<Brain size={16} color="#7c3aed" />} right={<button className="btn sm" onClick={() => go('meko')}>Open</button>}>
           <div className="feed" style={{ maxHeight: 300 }}>
             {(s.meko?.wire ?? []).slice(0, 30).map(w => (
               <div className="feed-item" key={w.id}>
                 <Avatar agent={agentOf(s, w.agent) ?? { name: w.agent, color: '#475569', icon: 'x' }} size="sm" />
-                <div className="main-t"><span className="mono" style={{ color: w.isError ? '#fda4af' : '#c4b5fd' }}>{w.tool}</span> <span className="dim">{w.args.slice(0, 70)}</span></div>
+                <div className="main-t"><span className="mono" style={{ color: w.isError ? '#e11d48' : '#7c3aed' }}>{w.tool}</span> <span className="dim">{w.args.slice(0, 70)}</span></div>
                 <span className="t">{w.ms}ms</span>
               </div>
             ))}
@@ -103,7 +103,7 @@ export default function Mission({ s, go }) {
             {!s.github?.activity?.length && <div className="empty">No agent activity on GitHub yet.</div>}
           </div>
         </Card>
-        <Card title="Fleet health" hint="the product, live" icon={<Factory size={16} color="#67e8f9" />} right={<button className="btn sm" onClick={() => go('edge')}>Edge Ops</button>}>
+        <Card title="Fleet health" hint="the product, live" icon={<Factory size={16} color="#0891b2" />} right={<button className="btn sm" onClick={() => go('edge')}>Edge Ops</button>}>
           <div className="col" style={{ gap: 9 }}>
             {(s.edge?.assets ?? []).map(a => (
               <div key={a.id} className="row" style={{ fontSize: 12.5 }}>
@@ -129,10 +129,10 @@ function HeroArt() {
       <circle cx="220" cy="140" r="70" fill="url(#hg)" opacity="0.5" />
       {Array.from({ length: 10 }).map((_, i) => {
         const a = (i / 10) * Math.PI * 2, x = 220 + Math.cos(a) * 105, y = 140 + Math.sin(a) * 85;
-        return <g key={i}><line x1="220" y1="140" x2={x} y2={y} stroke="#a78bfa" strokeOpacity="0.5" className="flow-line" /><circle cx={x} cy={y} r="7" fill={['#8b5cf6', '#06b6d4', '#22c55e', '#f43f5e', '#f59e0b', '#3b82f6', '#14b8a6', '#a3e635', '#ef4444', '#e879f9'][i]} /></g>;
+        return <g key={i}><line x1="220" y1="140" x2={x} y2={y} stroke="#7c3aed" strokeOpacity="0.5" className="flow-line" /><circle cx={x} cy={y} r="7" fill={['#8b5cf6', '#06b6d4', '#22c55e', '#f43f5e', '#f59e0b', '#3b82f6', '#14b8a6', '#65a30d', '#ef4444', '#e879f9'][i]} /></g>;
       })}
-      <circle cx="220" cy="140" r="22" fill="#1e1b4b" stroke="#a78bfa" strokeWidth="2" />
-      <text x="220" y="145" textAnchor="middle" fill="#ddd6fe" fontSize="13" fontWeight="800" fontFamily="Inter">Meko</text>
+      <circle cx="220" cy="140" r="22" fill="#1e1b4b" stroke="#7c3aed" strokeWidth="2" />
+      <text x="220" y="145" textAnchor="middle" fill="#6d28d9" fontSize="13" fontWeight="800" fontFamily="Inter">Meko</text>
     </svg>
   );
 }

@@ -34,11 +34,11 @@ export default function Meko({ s }) {
   return (
     <>
       <div className="grid g5">
-        <Stat label="Datapack" icon={<Database size={14} color="#a78bfa" />} value={<span style={{ fontSize: 18 }}>{s.meko?.datapackName}</span>} foot={<span className="mono" style={{ fontSize: 10.5 }}>{s.meko?.datapackId}</span>} />
-        <Stat label="Team memories" icon={<Brain size={14} color="#a78bfa" />} value={fmt.n(mems.length)} foot={`${new Set(mems.map(m => m.agent)).size} writers`} />
-        <Stat label="Knowledge documents" icon={<BookOpen size={14} color="#67e8f9" />} value={fmt.n(s.meko?.kb?.length ?? 0)} foot="specs, domain & security docs" />
-        <Stat label="MCP calls this session" icon={<Activity size={14} color="#86efac" />} value={fmt.n(s.meko?.stats?.calls ?? 0)} foot={`${s.meko?.stats?.errors ?? 0} errors`} />
-        <Stat label="Avg call latency" icon={<Timer size={14} color="#fcd34d" />} value={`${avg}ms`} foot="memory_search, memory_add, artifacts…" />
+        <Stat label="Datapack" icon={<Database size={14} color="#7c3aed" />} value={<span style={{ fontSize: 18 }}>{s.meko?.datapackName}</span>} foot={<span className="mono" style={{ fontSize: 10.5 }}>{s.meko?.datapackId}</span>} />
+        <Stat label="Team memories" icon={<Brain size={14} color="#7c3aed" />} value={fmt.n(mems.length)} foot={`${new Set(mems.map(m => m.agent)).size} writers`} />
+        <Stat label="Knowledge documents" icon={<BookOpen size={14} color="#0891b2" />} value={fmt.n(s.meko?.kb?.length ?? 0)} foot="specs, domain & security docs" />
+        <Stat label="MCP calls this session" icon={<Activity size={14} color="#16a34a" />} value={fmt.n(s.meko?.stats?.calls ?? 0)} foot={`${s.meko?.stats?.errors ?? 0} errors`} />
+        <Stat label="Avg call latency" icon={<Timer size={14} color="#d97706" />} value={`${avg}ms`} foot="memory_search, memory_add, artifacts…" />
       </div>
 
       <div className="grid g-3-2">
@@ -79,7 +79,7 @@ export default function Meko({ s }) {
             {!mems.length && <Empty>No memories yet.</Empty>}
           </div>
         </Card>
-        <Card title="Live MCP wire" hint="every Meko tool call made by an agent" icon={<Activity size={16} color="#86efac" />}>
+        <Card title="Live MCP wire" hint="every Meko tool call made by an agent" icon={<Activity size={16} color="#16a34a" />}>
           <div style={{ maxHeight: 560, overflow: 'auto' }}>
             <table className="t">
               <thead><tr><th>Time</th><th>Agent</th><th>Tool</th><th>Arguments</th><th className="num">ms</th></tr></thead>
@@ -88,7 +88,7 @@ export default function Meko({ s }) {
                   <tr key={w.id}>
                     <td className="mono dim">{w.at.slice(11, 19)}</td>
                     <td><div className="row" style={{ gap: 6 }}><Avatar agent={agentOf(s, w.agent) ?? { name: w.agent, color: '#475569' }} size="sm" /><span style={{ fontSize: 12 }}>{agentOf(s, w.agent)?.name ?? w.agent}</span></div></td>
-                    <td><span className="mono" style={{ color: w.isError ? '#fda4af' : '#c4b5fd' }}>{w.tool}</span></td>
+                    <td><span className="mono" style={{ color: w.isError ? '#e11d48' : '#7c3aed' }}>{w.tool}</span></td>
                     <td className="mono dim" style={{ maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }} title={w.args}>{w.args}</td>
                     <td className="num mono">{w.ms}</td>
                   </tr>

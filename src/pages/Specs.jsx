@@ -42,7 +42,7 @@ export default function Specs({ s }) {
         <div className="col" style={{ gap: 18 }}>
           <Card glow>
             <div className="row wrap">
-              <FileText size={22} color="#a78bfa" />
+              <FileText size={22} color="#7c3aed" />
               <div><div style={{ fontWeight: 800, fontSize: 18 }}>{f.id} · {f.title}</div><div className="dim mono" style={{ fontSize: 11.5 }}>{f.specFile} · spec hash {f.specHash} · exports {f.exports.join(', ')}</div></div>
               <div style={{ marginLeft: 'auto' }} className="row"><Tabs value={tab} onChange={setTab} options={tabs} /></div>
             </div>
@@ -50,7 +50,7 @@ export default function Specs({ s }) {
           <Card title="Acceptance criteria" hint="executable — each maps to a test in the acceptance suite">
             <table className="t"><tbody>{f.acs.map(ac => {
               const t = run?.stages?.test?.acceptance?.tests?.find(x => x.ac === ac.id);
-              return <tr key={ac.id}><td style={{ width: 26 }}>{t ? (t.ok ? <CheckCircle2 size={15} color="#86efac" /> : <CircleDashed size={15} color="#fda4af" />) : <CircleDashed size={15} className="dim" />}</td><td className="mono" style={{ width: 90 }}>{ac.id}</td><td>{ac.text}</td></tr>;
+              return <tr key={ac.id}><td style={{ width: 26 }}>{t ? (t.ok ? <CheckCircle2 size={15} color="#16a34a" /> : <CircleDashed size={15} color="#e11d48" />) : <CircleDashed size={15} className="dim" />}</td><td className="mono" style={{ width: 90 }}>{ac.id}</td><td>{ac.text}</td></tr>;
             })}</tbody></table>
           </Card>
           <Card title={tab === 'spec' ? 'Specification' : tab === 'develop' ? f.module : `${tab}.md`} hint={tab !== 'spec' && art[tab] ? `run ${art[tab].run} · ${art[tab].at?.slice(0, 16).replace('T', ' ')}` : ''}>

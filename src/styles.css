@@ -351,3 +351,22 @@ pre.code { margin: 0; background: #f8fafc; border: 1px solid var(--line); border
 .arch-kpis div { text-align: center; padding: 10px 6px; border-radius: 12px; background: #f8f7fe; border: 1px solid #efeafd; }
 .arch-kpis b { display: block; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .arch-kpis span { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+
+/* ---- Meko internals ---- */
+.mk-chain { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; }
+.mk-chain b { display: block; font-size: 12.5px; font-weight: 750; }
+.mk-chain small { display: block; font-size: 10.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mk-arrow { color: #c4b5fd; font-size: 22px; font-weight: 300; flex: none; }
+.mk-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.mk-steps li { display: flex; gap: 8px; font-size: 11.5px; line-height: 1.35; color: #334155; }
+.mk-steps li span { flex: none; font-size: 10px; margin-top: 1px; color: var(--tone); }
+.mk-steps li.i { color: #64748b; font-style: italic; }
+.mk-steps li.i span { color: #94a3b8; }
+.mk-tag { font-size: 9.5px; font-weight: 700; padding: 1px 7px; border-radius: 99px; margin-left: 6px; vertical-align: 2px; letter-spacing: 0.02em; }
+.mk-tag.o { color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; }
+.mk-tag.i { color: #64748b; background: #f8fafc; border: 1px dashed #cbd5e1; }
+.mk-tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.mk-tool { border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; margin-bottom: 6px; background: var(--surface-2); }
+.mk-tool.used { background: #faf8ff; border-color: #e4dafd; }
+.mk-tool .mono { font-size: 11.5px; font-weight: 650; color: #5b21b6; }
+.mk-tool small { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

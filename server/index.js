@@ -94,6 +94,7 @@ app.post('/api/meko/memories', wrap(async req => {
   return meko.addMemory(who, text, { kind: req.body.kind || 'note', feature: req.body.feature || '*', stage: 'manual' });
 }));
 app.get('/api/meko/wire', wrap(() => ({ wire: meko.wire, stats: meko.stats })));
+app.get('/api/meko/internals', wrap(() => meko.internals()));
 app.get('/api/knowledge', wrap(() => KNOWLEDGE.map(k => ({ file: k.file, title: k.title, body: k.body }))));
 
 // ---- GitHub --------------------------------------------------------------------

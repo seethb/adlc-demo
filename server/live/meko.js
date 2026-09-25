@@ -155,6 +155,22 @@ export async function uploadKnowledge(filename, markdown) {
   return r.json().catch(() => ({}));
 }
 
+// Live view of the datapack's internals for the Meko Internals page.
+export async function internals() {
+  const conversation_id = await conversationFor('studio');
+  const [describe, convs, listed] = await Promise.all([
+    call('datapack_describe', { datapack_id: datapackId(), conversation_id, include_status: true }, { quiet: true }).catch(e => ({ error: e.message })),
+    call('conversation_list', { datapack_id: datapackId(), conversation_id, limit: 50 }, { quiet: true }).catch(() => ({ conversations: [] })),
+    ensure().then(() => client.listTools()).catch(() => ({ tools: [] })),
+  ]);
+  return {
+    describe,
+    conversations: (convs.conversations ?? []).map(c => ({ id: c.id, agent: c.agent_id, title: c.title, messages: c.messages ?? 0, memoriesAdded: c.memories_added ?? 0, llmCalls: c.llm_calls ?? 0, lastActivity: c.last_activity_at })),
+    tools: (listed.tools ?? []).map(t => ({ name: t.name, description: (t.description ?? '').split('\n')[0].slice(0, 180), params: Object.keys(t.inputSchema?.properties ?? {}) })),
+    stats: { ...stats },
+  };
+}
+
 export async function health() {
   try {
     const t0 = Date.now();

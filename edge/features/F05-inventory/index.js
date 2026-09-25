@@ -1,26 +1,30 @@
 // F05 · Spare-parts inventory tracking
-// AC-F05-1..5 — see spec edge/features/F05-inventory/index.js
-// No I/O, no network, no npm deps (ADR-002).
+// Pure ES module, no I/O, no deps. See specs/features/F05-inventory/design.md.
+
+function isPositiveInt(n) {
+  return Number.isFinite(n) && Number.isInteger(n) && n > 0;
+}
 
 export function createInventory(parts = []) {
   const stock = new Map(); // sku -> { onHand, reserved, reorderPoint, reorderQty }
   const reservationsMap = new Map(); // ref -> { sku, qty }
-  const requisitionsMap = new Map(); // id -> { id, sku, qty, status }
+  const requisitionsMap = new Map(); // id -> { sku, qty, status }
   let reqCounter = 0;
 
   for (const p of parts) {
     stock.set(p.sku, {
-      onHand: p.onHand,
+      onHand: p.onHand ?? 0,
       reserved: 0,
-      reorderPoint: p.reorderPoint,
-      reorderQty: p.reorderQty ?? p.reorderPoint,
+      reorderPoint: p.reorderPoint ?? 0,
+      // AC-F05-3/4: fallback reorderQty; if reorderPoint is 0 (and no reorderQty given)
+      // maybeRequisition still floors the request qty at 1, so a qty=0 requisition
+      // can never be created even with this fallback.
+      reorderQty: p.reorderQty ?? Math.max(1, p.reorderPoint ?? 1),
     });
   }
 
   function assertKnownSku(sku) {
-    if (!stock.has(sku)) {
-      throw new Error('unknown sku: ' + sku);
-    }
+    if (!stock.has(sku)) throw new Error('unknown sku: ' + sku);
   }
 
   function available(sku) {
@@ -29,66 +33,71 @@ export function createInventory(parts = []) {
     return s.onHand - s.reserved;
   }
 
-  function hasOpenRequisition(sku) {
-    for (const r of requisitionsMap.values()) {
-      if (r.sku === sku && r.status === 'open') return true;
-    }
-    return false;
-  }
-
-  // AC-F05-3: exactly one open requisition per SKU once available <= reorderPoint
   function maybeRequisition(sku) {
     const s = stock.get(sku);
     const avail = s.onHand - s.reserved;
-    if (avail <= s.reorderPoint && !hasOpenRequisition(sku)) {
-      const qty = Math.max(s.reorderQty ?? 1, s.reorderPoint - avail, 1);
-      reqCounter += 1;
-      const id = 'REQ-' + reqCounter;
-      requisitionsMap.set(id, { id, sku, qty, status: 'open' });
+    if (avail <= s.reorderPoint) {
+      const hasOpen = [...requisitionsMap.values()].some(
+        (r) => r.sku === sku && r.status === 'open'
+      );
+      if (!hasOpen) {
+        const qty = Math.max(s.reorderPoint - avail, s.reorderQty, 1);
+        const id = 'REQ-' + ++reqCounter;
+        requisitionsMap.set(id, { id, sku, qty, status: 'open' });
+      }
     }
   }
 
-  // AC-F05-1: reservations never drive availability negative; shortfall reported
   function reserve(sku, qty, ref) {
     assertKnownSku(sku);
-    if (!Number.isFinite(qty)) throw new Error('invalid qty');
-    const avail = available(sku);
-    const shortfall = Math.max(0, qty - avail);
-    const grant = qty - shortfall;
+    if (!isPositiveInt(qty)) {
+      throw new Error('invalid qty: ' + qty);
+    }
+    if (typeof ref !== 'string' || ref.length === 0) {
+      throw new Error('invalid ref: ' + ref);
+    }
+    // AC-F05-1: reservation ref must be a stable, unique identity. If the same
+    // ref is reused while still open, release the prior reservation's stock
+    // first to avoid leaking reserved quantity on the old sku.
+    if (reservationsMap.has(ref)) {
+      release(ref);
+    }
     const s = stock.get(sku);
-    s.reserved += grant;
-    reservationsMap.set(ref, { sku, qty: grant });
+    const avail = s.onHand - s.reserved;
+    const shortfall = Math.max(0, qty - avail);
+    const granted = qty - shortfall;
+    s.reserved += granted;
+    reservationsMap.set(ref, { sku, qty: granted });
     maybeRequisition(sku);
-    return { ok: shortfall === 0, reserved: grant, shortfall };
+    return { ok: shortfall === 0, reserved: granted, shortfall };
   }
 
-  // AC-F05-2: release returns stock
   function release(ref) {
     const r = reservationsMap.get(ref);
     if (!r) return;
     const s = stock.get(r.sku);
-    s.reserved -= r.qty;
+    if (s) s.reserved -= r.qty;
     reservationsMap.delete(ref);
   }
 
-  // AC-F05-2: consume reduces on-hand and clears reservation
   function consume(ref) {
     const r = reservationsMap.get(ref);
     if (!r) return;
     const s = stock.get(r.sku);
-    s.onHand -= r.qty;
-    s.reserved -= r.qty;
+    if (s) {
+      s.onHand -= r.qty;
+      s.reserved -= r.qty;
+    }
     reservationsMap.delete(ref);
-    maybeRequisition(r.sku);
+    if (s) maybeRequisition(r.sku);
   }
 
-  // AC-F05-4: receiving a requisition restocks by its quantity and closes it
   function receive(reqId) {
-    const r = requisitionsMap.get(reqId);
-    if (!r || r.status !== 'open') return false;
-    const s = stock.get(r.sku);
-    s.onHand += r.qty;
-    r.status = 'received';
+    const req = requisitionsMap.get(reqId);
+    if (!req || req.status !== 'open') return false;
+    const s = stock.get(req.sku);
+    if (s) s.onHand += req.qty;
+    req.status = 'received';
     return true;
   }
 
@@ -110,7 +119,7 @@ export function createInventory(parts = []) {
   }
 
   function reservations() {
-    return [...reservationsMap.entries()].map(([ref, r]) => ({ ref, sku: r.sku, qty: r.qty }));
+    return [...reservationsMap.entries()].map(([ref, r]) => ({ ref, ...r }));
   }
 
   return {

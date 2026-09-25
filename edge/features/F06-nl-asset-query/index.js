@@ -1,225 +1,195 @@
-// F06 — Natural-language asset queries (NLQ)
-// Pure ES module, no I/O/network (org standard ADR-001).
-// Reads FLEET/ASSET_TYPES from the shared reference; never writes OT state
-// (IEC 62443 read-only edge analytics — this module never touches PLC/OPC-UA).
+// F06 · Natural-language asset queries (NLQ)
+// Pure ES module — no I/O, no network, no eval (ADR-001 org standard).
+// Reads only static fleet reference data; never writes PLC/OPC-UA/setpoints
+// (IEC 62443 — edge analytics is read-only towards OT).
 import { FLEET, ASSET_TYPES } from '../../reference/fleet.js';
 
-// ---- static lookup tables --------------------------------------------
+// ---------------------------------------------------------------------------
+// Static lookup tables (module-scope, immutable) — AC-F06-1..3
+// ---------------------------------------------------------------------------
 
-// AC-F06-1: ordered, deterministic intent patterns — first match wins.
+// Ordered intent patterns — first match wins, deterministic (AC-F06-1).
+// Time-window queries ("last 10 minutes") without another stronger intent
+// are treated as trend queries (history over a window), matched separately
+// below via the extracted windowSec, not purely by regex.
 const INTENT_PATTERNS = [
+  { intent: 'anomalies', re: /anomal|fault|alarm|deviat|abnormal/i },
   { intent: 'car', re: /\bcar\b|corrective action/i },
-  { intent: 'work_orders', re: /work order|\bwo\b|\bticket\b/i },
-  { intent: 'inventory', re: /spare part|inventory|in stock|on hand|stock level/i },
-  { intent: 'ranking', re: /\b(top|rank|worst|best|highest|lowest|most|least|compare)\b/i },
-  // "performance" / "over time" / "history" / trend-shaped questions must
-  // win before the generic condition/anomaly buckets below (fixes
-  // "Show shaft performance for the last 10 minutes" -> 'trend').
-  { intent: 'trend', re: /\btrend\b|\bperformance\b|over time|\bhistory\b|historical|increasing|decreasing|change over/i },
-  // Condition phrasing is checked before the anomaly keyword list so that
-  // "close to surge/failure" style questions resolve to 'condition', not
-  // 'anomalies'.
-  { intent: 'condition', re: /how is|how are|how's|\bstatus\b|\bcondition\b|close to|\babout to\b|current state|\bperforming\b|health of/i },
-  { intent: 'anomalies', re: /anomal(y|ies)|unusual|abnormal|\bspike\b|deviat|\bglitch\b|\bfault\b|\bsurge\b|cavitation|\brisk\b/i },
+  { intent: 'work_orders', re: /work order|maintenance ticket|open ticket|schedule[d]? maintenance/i },
+  { intent: 'inventory', re: /spare|stock|inventory|parts? (on hand|available)/i },
+  { intent: 'ranking', re: /which .* (highest|lowest|worst|best)|top \d+|rank(ed|ing)?|worst performing/i },
+  { intent: 'trend', re: /trend|over (the )?(last|past)\s+\d+\s*(day|days|week|weeks)|history|compare (to|with)|yesterday/i }
+  // fallback handled explicitly in classifyIntent: 'condition'
 ];
 
-// AC-F06-2: asset type aliasing, disambiguating bare "centrifugal".
-const CANONICAL_TYPES = ['motor', 'centrifugal pump', 'shaft', 'centrifugal compressor', 'gearbox'];
+// Asset-type surface forms → canonical type (AC-F06-2). Compound forms first.
+const ASSET_TYPE_ALIASES = [
+  { re: /centrifugal pumps?/i, type: 'centrifugal pump' },
+  { re: /centrifugal compressors?/i, type: 'centrifugal compressor' },
+  { re: /\bmotors?\b/i, type: 'motor' },
+  { re: /\bgearbox(es)?\b/i, type: 'gearbox' },
+  { re: /\bshafts?\b/i, type: 'shaft' },
+  { re: /\bpumps?\b/i, type: 'centrifugal pump' },
+  { re: /\bcompressors?\b/i, type: 'centrifugal compressor' }
+];
 
-// AC-F06-3: metric phrase → canonical metric key.
-// "cavitation" resolves to the real telemetry metric that indicates
-// cavitation risk (suction pressure), not a synthetic key.
+// Metric phrase → canonical metric key (AC-F06-3).
 const METRIC_ALIASES = [
-  [/bearing temp(erature)?/i, 'bearingTemp'],
-  [/winding temp(erature)?/i, 'windingTemp'],
-  [/discharge temp(erature)?/i, 'dischargeTemp'],
-  [/oil temp(erature)?/i, 'oilTemp'],
-  [/misalignment/i, 'misalignment'],
-  [/vibration/i, 'vibration'],
-  [/\bcurrent\b/i, 'current'],
-  [/\brpm\b|\bspeed\b/i, 'rpm'],
-  [/power factor/i, 'powerFactor'],
-  [/suction pressure/i, 'suctionPressure'],
-  [/cavitation/i, 'suctionPressure'],
-  [/\bflow\b/i, 'flow'],
-  [/\bpressure\b/i, 'pressure'],
-  [/\bsurge\b/i, 'surge'],
-  [/backlash/i, 'backlash'],
-  [/torque/i, 'torque'],
-  [/temp(erature)?/i, 'temperature'],
+  { re: /bearing temp(erature)?/i, metric: 'bearingTemp' },
+  { re: /winding temp(erature)?/i, metric: 'windingTemp' },
+  { re: /vibration/i, metric: 'vibration' },
+  { re: /power factor/i, metric: 'powerFactor' },
+  { re: /current/i, metric: 'current' },
+  { re: /\brpm\b|speed/i, metric: 'rpm' },
+  // Cavitation risk is driven by low suction pressure — map to suctionPressure
+  // rather than a synthetic "cavitation" metric (AC-F06-3).
+  { re: /cavitation/i, metric: 'suctionPressure' },
+  { re: /suction pressure/i, metric: 'suctionPressure' },
+  { re: /flow/i, metric: 'flow' },
+  { re: /pressure/i, metric: 'pressure' },
+  { re: /misalignment/i, metric: 'misalignment' },
+  { re: /efficiency/i, metric: 'efficiency' },
+  // "surge" / "surge margin" / "close to surge" — compressor surge margin.
+  { re: /surge/i, metric: 'surgeMargin' },
+  { re: /temperature/i, metric: 'temperature' }
 ];
 
-const TIME_UNIT_SEC = { second: 1, seconds: 1, minute: 60, minutes: 60, hour: 3600, hours: 3600 };
+const TIME_UNIT_SEC = {
+  second: 1, seconds: 1,
+  minute: 60, minutes: 60,
+  hour: 3600, hours: 3600
+};
 
-// Normalized ("motorunit" style, lowercase, no separators/case) FLEET id lookup.
-const FLEET_ID_INDEX = new Map(FLEET.map((a) => [a.id.replace(/[\s-]/g, '').toUpperCase(), a.id]));
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
-// Normalize a FLEET/ASSET_TYPES type or label string (camelCase or spaced)
-// to the canonical spaced-lowercase form used throughout this module.
-function normalizeTypeStr(s) {
-  return String(s)
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// Prefer the human-readable label from ASSET_TYPES (e.g. "Centrifugal Pump")
-// as the source of truth for canonical type matching — more robust than
-// guessing from the raw `type` key's casing.
-const FLEET_NORM_TYPES = FLEET.map((a) => {
-  const spec = ASSET_TYPES[a.type];
-  const label = spec?.label ?? a.type;
-  return { asset: a, normType: normalizeTypeStr(label) };
-});
-
-// ---- internal helpers ---------------------------------------------------
-
-function classifyIntent(text) {
+// Time windows bias classification towards "trend" (a query over a window is
+// asking about history), unless a stronger, more specific intent matched
+// first — AC-F06-1, AC-F06-3.
+function classifyIntent(text, windowSec) {
   for (const { intent, re } of INTENT_PATTERNS) {
     if (re.test(text)) return intent;
   }
+  if (windowSec != null) return 'trend';
   return 'condition';
 }
 
+// Normalizes free-text ids ("SHF 301" -> "SHF-301") — AC-F06-2.
 function extractAssetIds(text) {
-  const out = [];
-  const re = /([A-Za-z]{2,6})[\s-]?(\d{2,5})/g;
+  const re = /\b([A-Z]{2,5})[\s-](\d{2,5})\b/g;
+  const ids = [];
   let m;
-  while ((m = re.exec(text))) {
-    const key = (m[1] + m[2]).toUpperCase();
-    const id = FLEET_ID_INDEX.get(key);
-    if (id && !out.includes(id)) out.push(id);
+  while ((m = re.exec(text)) !== null) {
+    ids.push(`${m[1]}-${m[2]}`);
   }
-  return out;
+  return [...new Set(ids)];
 }
 
+// Resolves canonical asset types; disambiguates bare "centrifugal" — AC-F06-2.
 function extractAssetTypes(text) {
-  const lower = text.toLowerCase();
-  const types = [];
+  const types = new Set();
+  for (const { re, type } of ASSET_TYPE_ALIASES) {
+    if (re.test(text)) types.add(type);
+  }
+  const hasBareCentrifugal = /centrifugal/i.test(text) &&
+    !/centrifugal pumps?/i.test(text) && !/centrifugal compressors?/i.test(text);
+
   let ambiguous = false;
-  const candidates = [];
-
-  const has = (re) => re.test(lower);
-
-  if (has(/centrifugal pumps?/)) types.push('centrifugal pump');
-  else if (has(/centrifugal compressors?/)) types.push('centrifugal compressor');
-  else if (has(/\bpumps?\b/)) types.push('centrifugal pump');
-  else if (has(/\bcompressors?\b/)) types.push('centrifugal compressor');
-
-  if (has(/\bmotors?\b/)) types.push('motor');
-  if (has(/\bshafts?\b/)) types.push('shaft');
-  if (has(/\bgearboxe?s?\b/)) types.push('gearbox');
-
-  // Bare "centrifugal" without pump/compressor qualifier is genuinely
-  // ambiguous — flag it instead of guessing (spec risk note).
-  if (types.length === 0 && has(/\bcentrifugal\b/) && !has(/pump|compressor/)) {
+  let candidates = [];
+  if (hasBareCentrifugal && types.size === 0) {
     ambiguous = true;
-    candidates.push('centrifugal pump', 'centrifugal compressor');
+    candidates = ['centrifugal pump', 'centrifugal compressor'];
   }
-
-  const unique = [...new Set(types)];
-  return { types: unique, ambiguous, candidates };
+  return { types: [...types], ambiguous, candidates };
 }
 
+// Extracts referenced metrics — AC-F06-3.
 function extractMetrics(text) {
-  const found = [];
-  for (const [re, canonical] of METRIC_ALIASES) {
-    if (re.test(text) && !found.includes(canonical)) found.push(canonical);
+  const metrics = new Set();
+  for (const { re, metric } of METRIC_ALIASES) {
+    if (re.test(text)) metrics.add(metric);
   }
-  return found;
+  return [...metrics];
 }
 
+// Extracts "last N minute(s)/hour(s)/second(s)" time windows — AC-F06-3.
 function extractWindow(text) {
-  const m = /last\s+(\d+)\s*(second|seconds|minute|minutes|hour|hours)/i.exec(text);
+  const m = /\b(?:last|past)\s+(\d+)\s*(second|seconds|minute|minutes|hour|hours)\b/i.exec(text);
   if (!m) return null;
   const n = Number(m[1]);
   const unit = m[2].toLowerCase();
   return n * TIME_UNIT_SEC[unit];
 }
 
-function resolveAssets(ids, types) {
-  const resolved = [];
-  const push = (asset) => {
-    if (!resolved.some((r) => r.id === asset.id)) resolved.push(asset);
-  };
-
-  for (const id of ids) {
-    const asset = FLEET.find((a) => a.id === id);
-    if (asset) push(asset);
+// Selects the fleet slice matching ids/types/ambiguity — AC-F06-2.
+// Returned as an array (test uses .length) carrying extra metadata props
+// (.ids/.ambiguous/.candidates) so both consumers can use it.
+function resolveAssets(ids, types, ambiguous, candidates) {
+  let matched = [];
+  if (ids.length) {
+    matched = FLEET.filter(a => ids.includes(a.id));
+  } else if (types.length) {
+    matched = FLEET.filter(a => types.includes(a.type));
+  } else if (ambiguous) {
+    matched = FLEET.filter(a => candidates.includes(a.type));
+  } else {
+    matched = FLEET.slice(); // whole-fleet queries (e.g. rankings)
   }
-
-  if (types.length > 0) {
-    for (const { asset, normType } of FLEET_NORM_TYPES) {
-      if (types.includes(normType)) push(asset);
-    }
-  }
-
-  return resolved;
+  const result = matched;
+  result.ids = matched.map(a => a.id);
+  result.ambiguous = ambiguous;
+  result.candidates = candidates;
+  return result;
 }
 
-// ---- exports --------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
 
+// AC-F06-1, AC-F06-2, AC-F06-3
 export function parseQuery(text) {
   if (typeof text !== 'string' || text.trim().length === 0) {
-    throw new TypeError('parseQuery: text must be a non-empty string');
+    throw new TypeError('parseQuery requires a non-empty string');
   }
 
-  const intent = classifyIntent(text);
   const assetIds = extractAssetIds(text);
   const { types: assetTypes, ambiguous, candidates } = extractAssetTypes(text);
   const metrics = extractMetrics(text);
   const windowSec = extractWindow(text);
-
-  let resolvedList;
-  if (ambiguous && assetIds.length === 0) {
-    // No concrete ids to disambiguate with — surface both candidate types
-    // so the caller always has a non-empty slice to ground the answer in.
-    resolvedList = resolveAssets(assetIds, candidates);
-  } else {
-    resolvedList = resolveAssets(assetIds, assetTypes);
-  }
-
-  const resolvedAssets = resolvedList.map((a) => a.id);
-  resolvedAssets.ambiguous = ambiguous;
-  resolvedAssets.candidates = candidates;
+  const intent = classifyIntent(text, windowSec);
+  const resolvedAssets = resolveAssets(assetIds, assetTypes, ambiguous, candidates);
 
   return { intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets };
 }
 
-// AC-F06-4: 100 at nominal, drops below 50 under severe deviation.
-// deviationScore uses relative distance from the fleet-configured nominal
-// mean (ASSET_TYPES[..].nominal[metric][0]); weighted sum is subtracted
-// from 100 and clamped to [0,100].
-const HEALTH_WEIGHT = 20;
-
+// AC-F06-4: health = 100 minus weighted deviation from nominal, clamped [0,100].
 export function healthScore(assetType, metrics) {
-  const key = Object.keys(ASSET_TYPES).find(
-    (k) => normalizeTypeStr(k) === normalizeTypeStr(assetType) ||
-      normalizeTypeStr(ASSET_TYPES[k]?.label ?? '') === normalizeTypeStr(assetType)
-  );
-  if (!key) throw new TypeError(`healthScore: unknown assetType "${assetType}"`);
-
-  const nominal = ASSET_TYPES[key].nominal ?? {};
+  const def = ASSET_TYPES[assetType];
+  if (!def) throw new TypeError(`Unknown asset type: ${assetType}`);
   if (metrics == null || typeof metrics !== 'object') {
-    throw new TypeError('healthScore: metrics must be an object');
+    throw new TypeError('metrics must be an object');
   }
 
-  let penalty = 0;
-  for (const [name, value] of Object.entries(metrics)) {
-    // IoT security standard: untrusted telemetry — reject non-finite values
-    // (NaN/Infinity/non-numeric) rather than silently coercing.
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
-      throw new TypeError(`healthScore: non-finite metric value for "${name}"`);
+  let sumSquares = 0;
+  for (const [key, val] of Object.entries(metrics)) {
+    // IoT security standard: telemetry is untrusted input — reject
+    // non-finite / non-numeric values (OWASP IoT I5).
+    if (typeof val !== 'number' || !Number.isFinite(val)) {
+      throw new TypeError(`Non-finite metric value for ${key}`);
     }
-    const spec = nominal[name];
-    if (!spec) continue; // unknown metric for this asset type — ignored, not scored
-    const [mean] = spec;
-    const relDev = Math.abs(value - mean) / Math.max(Math.abs(mean), 1e-6);
-    penalty += relDev * HEALTH_WEIGHT;
+    const nominal = def.nominal?.[key];
+    if (!nominal) {
+      // Unknown metric for this asset type — reject per IoT security standard.
+      throw new TypeError(`Unknown metric ${key} for asset type ${assetType}`);
+    }
+    const [mean, sigma] = nominal;
+    if (sigma > 0) {
+      const z = (val - mean) / sigma;
+      sumSquares += z * z;
+    }
   }
 
-  const score = Math.round(Math.max(0, Math.min(100, 100 - penalty)));
-  return score;
+  const raw = 100 - 10 * Math.sqrt(sumSquares);
+  return Math.round(Math.max(0, Math.min(100, raw)));
 }

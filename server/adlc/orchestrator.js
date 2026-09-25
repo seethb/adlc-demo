@@ -613,5 +613,21 @@ export async function sprint(ids = features().map(f => f.id)) {
   emit('sprint', { status: 'done' });
 }
 
+// After an API restart, pick up where the team left off: the newest
+// interrupted run per feature (from the last two hours) resumes from its
+// interrupted stage on the same branch and PR.
+export function resumeInterrupted() {
+  const cutoff = Date.now() - 2 * 3600 * 1000;
+  const newest = {};
+  for (const r of Object.values(state.runs)) if (!newest[r.feature] || r.createdAt > newest[r.feature].createdAt) newest[r.feature] = r;
+  const resumed = [];
+  for (const r of Object.values(newest)) {
+    if (r.status !== 'interrupted' || Date.parse(r.createdAt) < cutoff) continue;
+    const from = STAGES.find(st => r.stages[st]?.status === 'interrupted') ?? STAGES.find(st => r.stages[st]?.status !== 'passed');
+    resumed.push(retry(r.id, from).id);
+  }
+  return resumed;
+}
+
 export const isActive = id => active.has(id);
 export const waitingApproval = () => Object.values(state.runs).filter(r => r.stages?.deploy?.status === 'awaiting_approval').map(r => r.id);

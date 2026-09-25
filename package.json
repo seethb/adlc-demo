@@ -5,7 +5,7 @@
   "description": "Spec-driven Agentic Development Lifecycle (ADLC) for an IoT edge analytics app — 10 agents sharing one Meko datapack, gated through live GitHub",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n api,ui -c magenta,cyan \"node --watch-path=server --watch-path=edge server/index.js\" \"vite\"",
+    "dev": "concurrently -k -n api,ui -c magenta,cyan \"node --watch-path=server --watch-path=edge/reference server/index.js\" \"vite\"",
     "build": "vite build",
     "start": "vite build && node server/index.js",
     "serve": "node server/index.js",

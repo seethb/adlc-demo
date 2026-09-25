@@ -263,3 +263,91 @@ pre.code { margin: 0; background: #f8fafc; border: 1px solid var(--line); border
 .hero-art { position: absolute; right: -40px; top: -40px; width: 380px; height: 260px; opacity: 0.9; pointer-events: none; }
 .flow-line { stroke-dasharray: 4 6; animation: dash 1.2s linear infinite; }
 @keyframes dash { to { stroke-dashoffset: -20; } }
+
+/* ---- Architecture & Data Flow ---- */
+.arch-head { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 18px 22px; }
+.arch-title { font-size: 19px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 4px; }
+.arch-legend { margin-left: auto; display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); font-weight: 600; }
+.arch-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.arch-legend i { width: 18px; height: 3px; border-radius: 3px; display: inline-block; }
+.arch-stage { padding: 16px 18px 20px; }
+.arch-steps { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.arch-dots { display: inline-flex; gap: 5px; padding: 3px; border-radius: 12px; background: #f1f4f9; border: 1px solid var(--line); }
+.arch-dots button { width: 26px; height: 26px; border-radius: 8px; border: 0; background: transparent; font-size: 11.5px; font-weight: 750; color: var(--muted); cursor: pointer; transition: all .2s; }
+.arch-dots button:hover { background: #fff; color: var(--text); }
+.arch-dots button.done { color: #7c3aed; }
+.arch-dots button.on { background: var(--grad); color: #fff; box-shadow: 0 4px 12px rgba(124, 58, 237, .35); }
+.arch-caption { flex: 1; min-width: 280px; display: flex; gap: 10px; align-items: baseline; font-size: 13px; padding: 9px 14px; border-radius: 12px; background: linear-gradient(135deg, #faf8ff, #f4fbfd); border: 1px solid #ece8fb; }
+.arch-caption b { white-space: nowrap; color: #5b21b6; }
+.arch-caption span { color: var(--muted); }
+.arch-canvas { position: relative; width: 100%; border-radius: 18px; background:
+  radial-gradient(circle at 60% 50%, rgba(124, 58, 237, .06), transparent 45%),
+  linear-gradient(rgba(15, 23, 42, .035) 1px, transparent 1px) 0 0 / 24px 24px,
+  linear-gradient(90deg, rgba(15, 23, 42, .035) 1px, transparent 1px) 0 0 / 24px 24px, #fbfcfe;
+  border: 1px solid var(--line); overflow: hidden; }
+.arch-inner { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.arch-svg { position: absolute; inset: 0; overflow: visible; }
+.arch-pill { margin: 0 auto; width: max-content; max-width: 100%; font-size: 10.5px; font-weight: 700; padding: 2px 9px; border-radius: 99px; background: #fff; border: 1px solid; white-space: nowrap; box-shadow: 0 1px 3px rgba(15, 23, 42, .06); }
+
+.arch-box { position: absolute; background: #fff; border: 1px solid #e6e9f2; border-radius: 18px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 10px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 10px 30px rgba(15, 23, 42, .06); transition: box-shadow .25s, border-color .25s, opacity .35s, transform .25s; }
+.arch-box::before { content: ''; position: absolute; left: 16px; right: 16px; top: -1px; height: 3px; border-radius: 0 0 3px 3px; background: var(--tone); opacity: .9; }
+.arch-box:hover { transform: translateY(-2px); box-shadow: 0 2px 4px rgba(15, 23, 42, .05), 0 16px 40px rgba(15, 23, 42, .09); }
+.arch-box.big { cursor: default; background: linear-gradient(180deg, #ffffff, #fbfaff); }
+.arch-box.big:hover { transform: none; }
+.arch-box.hero { border-color: #d9ccfb; background: linear-gradient(160deg, #ffffff 0%, #f7f3ff 100%); box-shadow: 0 0 0 4px rgba(124, 58, 237, .06), 0 18px 44px rgba(124, 58, 237, .16); }
+.arch-box.sel, .arch-tile.sel { border-color: var(--tone); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone) 18%, transparent), 0 14px 36px rgba(15, 23, 42, .08); }
+.arch-box.lit, .arch-tile.lit { border-color: var(--tone); box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 22%, transparent), 0 18px 44px color-mix(in srgb, var(--tone) 25%, transparent); }
+.arch-box.dim, .arch-tile.dim { opacity: .38; }
+.arch-box-h { display: flex; align-items: center; gap: 10px; }
+.arch-box-h b { display: block; font-size: 14.5px; font-weight: 800; letter-spacing: -0.01em; }
+.arch-box-h small { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.arch-ic { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex: none; color: var(--tone, #475569); background: color-mix(in srgb, var(--tone, #475569) 12%, white); }
+.arch-ic.sm { width: 28px; height: 28px; border-radius: 9px; }
+.arch-sub-h { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: #94a3b8; }
+.arch-stages { display: flex; align-items: center; gap: 3px; color: #a78bfa; }
+.arch-stages span { flex: 1; text-align: center; font-size: 10.5px; font-weight: 700; color: #5b21b6; background: #f3effe; border: 1px solid #e4dafd; border-radius: 8px; padding: 5px 0; }
+.arch-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.arch-tile { position: relative; display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 13px; border: 1px solid #eceff5; background: #fff; cursor: pointer; transition: all .25s; }
+.arch-tile:hover { border-color: color-mix(in srgb, var(--tone) 45%, white); transform: translateY(-1px); }
+.arch-tile b { display: block; font-size: 12.5px; font-weight: 750; }
+.arch-tile small { display: block; font-size: 10.5px; color: var(--dim); font-family: var(--mono); }
+.arch-people { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+.arch-people span { aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; border: 1.5px solid; }
+.arch-note { font-size: 10.5px; color: var(--dim); text-align: center; }
+.arch-agents { display: flex; flex-direction: column; gap: 1px; }
+.arch-agents > div { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 4px; border-radius: 8px; }
+.arch-agents > div:hover { background: #f6f7fb; }
+.arch-agents .ai { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; color: #fff; flex: none; }
+.arch-agents b { font-weight: 750; width: 58px; }
+.arch-agents em { font-style: normal; color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arch-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.arch-chips span { font-size: 10.5px; font-weight: 650; padding: 3px 8px; border-radius: 99px; border: 1px solid; font-family: var(--mono); }
+.arch-stat { margin-top: auto; display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 700; font-family: var(--mono); }
+.arch-stat i { width: 7px; height: 7px; border-radius: 50%; animation: pulse 1.8s infinite; }
+.arch-ot { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 650; color: #0e7490; background: #ecfeff; border: 1px solid #cffafe; border-radius: 9px; padding: 6px 8px; }
+.arch-rail { position: relative; display: flex; flex-direction: column; gap: 6px; padding-left: 4px; }
+.arch-rail::before { content: ''; position: absolute; left: 11px; top: 12px; bottom: 12px; width: 2px; background: linear-gradient(#a5f3fc, #c4b5fd); border-radius: 2px; }
+.arch-rail > div { position: relative; display: grid; grid-template-columns: 16px 1fr; column-gap: 8px; align-items: center; padding: 7px 8px 7px 0; border-radius: 10px; }
+.arch-rail > div i { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2.5px solid #cbd5e1; z-index: 1; margin-left: 1px; }
+.arch-rail > div.live i { border-color: #0891b2; background: #0891b2; box-shadow: 0 0 0 4px rgba(8, 145, 178, .15); }
+.arch-rail > div > div { font-size: 12px; line-height: 1.25; }
+.arch-rail > div > div b { font-family: var(--mono); font-size: 10.5px; color: #0e7490; margin-right: 5px; }
+.arch-rail > div small { grid-column: 2; font-size: 10px; color: var(--dim); font-family: var(--mono); }
+.arch-rail > div.live small { color: #0891b2; font-weight: 700; }
+.arch-flows td { font-size: 12.5px; }
+.arch-flows td.mono { font-size: 11.5px; color: #334155; }
+.arch-swatch { width: 12px; height: 12px; border-radius: 4px; display: inline-block; }
+.arch-detail label { display: block; font-size: 10.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: #94a3b8; margin: 4px 0 6px; }
+.arch-detail ul { margin: 0 0 12px; padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
+.arch-detail p { margin: 0 0 12px; font-size: 12.5px; }
+.arch-stack { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; }
+.arch-stack .card { display: flex; gap: 10px; align-items: center; padding: 12px 14px; }
+.arch-stack .card .arch-ic { --tone: #7c3aed; }
+.arch-stack b { display: block; font-size: 12.5px; }
+.arch-stack span { display: block; font-size: 11px; color: var(--muted); }
+@media (max-width: 1280px) { .arch-stack { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.arch-kpis { margin-top: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding-top: 12px; border-top: 1px dashed #e4e7ef; }
+.arch-kpis div { text-align: center; padding: 10px 6px; border-radius: 12px; background: #f8f7fe; border: 1px solid #efeafd; }
+.arch-kpis b { display: block; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.arch-kpis span { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; }

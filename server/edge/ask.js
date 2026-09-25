@@ -24,7 +24,8 @@ function facts(plan, snap) {
     // Engineering facts are computed, not left to the model (ISO zone, health).
     return { id: a.id, name: a.name, type: a.typeLabel, line: a.line, criticality: a.criticality, health: a.health, iso10816Zone: vibrationZone(a.metrics.vibration ?? 0), metrics, trend, openAnomaly: a.openAnomaly ? { severity: a.openAnomaly.severity, failureMode: a.openAnomaly.failureMode, rule: a.openAnomaly.rule } : null };
   };
-  const out = { question_plan: plan, assets: pick.map(trim) };
+  // Stock questions don't need telemetry; keep the prompt to what the plan selected.
+  const out = { question_plan: plan, assets: plan.intent === 'inventory' ? [] : pick.map(trim) };
   if (['work_orders', 'condition', 'anomalies', 'ranking'].includes(plan.intent)) out.workOrders = snap.workOrders.filter(w => w.status !== 'closed' && plan.resolvedAssets.includes(w.assetId)).map(w => ({ id: w.id, priority: w.priority, title: w.title, status: w.status, occurrences: w.occurrences }));
   if (['car', 'condition'].includes(plan.intent)) out.cars = snap.cars.filter(c => plan.resolvedAssets.includes(c.assetId)).map(c => ({ id: c.id, trigger: c.trigger, problem: c.d2_problem, rootCause: c.d4_rootCause }));
   if (plan.intent === 'inventory') out.inventory = snap.inventory.map(i => ({ sku: i.sku, name: i.name, available: i.available, reorderPoint: i.reorderPoint, low: i.low })), out.requisitions = snap.requisitions.filter(r => r.status === 'open');

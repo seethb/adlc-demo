@@ -20,7 +20,7 @@ export default function Ask({ s }) {
   const [thread, setThread] = useState([]);
   const [busy, setBusy] = useState(false);
   const end = useRef(null);
-  useEffect(() => end.current?.scrollIntoView({ behavior: 'smooth' }), [thread]);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [thread]);
   const sage = agentOf(s, 'sage');
 
   const ask = async question => {

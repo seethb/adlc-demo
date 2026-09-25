@@ -86,7 +86,7 @@ export default function Meko({ s }) {
               <tbody>
                 {wire.slice(0, 120).map(w => (
                   <tr key={w.id}>
-                    <td className="mono dim">{w.at.slice(11, 19)}</td>
+                    <td className="mono dim">{fmt.time(w.at)}</td>
                     <td><div className="row" style={{ gap: 6 }}><Avatar agent={agentOf(s, w.agent) ?? { name: w.agent, color: '#475569' }} size="sm" /><span style={{ fontSize: 12 }}>{agentOf(s, w.agent)?.name ?? w.agent}</span></div></td>
                     <td><span className="mono" style={{ color: w.isError ? '#e11d48' : '#7c3aed' }}>{w.tool}</span></td>
                     <td className="mono dim" style={{ maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }} title={w.args}>{w.args}</td>

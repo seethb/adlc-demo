@@ -95,7 +95,7 @@ export default function Economics({ s }) {
             <tbody>
               {e.recent.map((r, i) => (
                 <tr key={i}>
-                  <td className="mono dim">{r.at.slice(11, 19)}</td>
+                  <td className="mono dim">{fmt.time(r.at)}</td>
                   <td><div className="row" style={{ gap: 6 }}><Avatar agent={agentOf(s, r.agent)} size="sm" />{agentOf(s, r.agent)?.name}</div></td>
                   <td>{r.feature} · {r.stage} {r.reused && <Badge tone="violet">♻ reused</Badge>}</td>
                   <td className="num mono">{fmt.n(r.baselineIn)}</td>

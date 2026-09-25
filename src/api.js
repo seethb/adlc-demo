@@ -3,7 +3,14 @@
 import { useEffect, useReducer, useRef } from 'react';
 
 export async function api(path, opts = {}) {
-  const r = await fetch(`/api${path}`, { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeout ?? 90000);
+  let r;
+  try {
+    r = await fetch(`/api${path}`, { ...opts, signal: ctrl.signal, headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'The request timed out — the API may be busy or restarting. Please try again.' : `Cannot reach the Studio API (${e.message}). Is \`npm run dev\` running?`);
+  } finally { clearTimeout(timer); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error ?? `HTTP ${r.status}`);
   return data;
@@ -76,7 +83,13 @@ export function useLive() {
   return [state, dispatch];
 }
 
+// All times in the Studio are shown in India Standard Time.
+const IST = { timeZone: 'Asia/Kolkata', hour12: false };
 export const fmt = {
+  time: t => (t ? `${new Date(t).toLocaleTimeString('en-GB', IST)} IST` : ''),
+  clock: t => (t ? new Date(t).toLocaleTimeString('en-GB', IST) : ''),
+  hm: t => (t ? `${new Date(t).toLocaleTimeString('en-GB', { ...IST, hour: '2-digit', minute: '2-digit' })} IST` : ''),
+  dateTime: t => (t ? `${new Date(t).toLocaleString('en-GB', { ...IST, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })} IST` : ''),
   n: v => (v ?? 0).toLocaleString(),
   k: v => (Math.abs(v ?? 0) >= 1e6 ? `${(v / 1e6).toFixed(2)}M` : Math.abs(v ?? 0) >= 1e3 ? `${(v / 1e3).toFixed(1)}k` : `${Math.round(v ?? 0)}`),
   usd: v => `$${(v ?? 0) < 1 ? (v ?? 0).toFixed(4) : (v ?? 0).toFixed(2)}`,

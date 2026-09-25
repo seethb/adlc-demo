@@ -60,7 +60,7 @@ export default function GitHubPage({ s }) {
               <a key={i} className="feed-item" href={e.url} target="_blank" rel="noreferrer">
                 <Avatar agent={agentOf(s, e.agent)} size="sm" />
                 <div style={{ whiteSpace: 'normal', fontSize: 12.5 }}>{e.kind === 'status' ? <Badge tone={e.state === 'success' ? 'green' : e.state === 'failure' ? 'red' : 'amber'}>{e.context}</Badge> : <Badge tone="gray">{e.kind}</Badge>} {e.title}</div>
-                <span className="t">{e.at.slice(11, 19)}</span>
+                <span className="t">{fmt.time(e.at)}</span>
               </a>
             ))}
             {!s.github?.activity?.length && <Empty>Nothing yet this session.</Empty>}

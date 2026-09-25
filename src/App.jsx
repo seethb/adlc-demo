@@ -25,6 +25,23 @@ const PAGES = [
   { id: 'ask', label: 'Ask the Fleet', icon: MessagesSquare, group: 'The product', sub: 'Natural-language asset condition queries' },
 ];
 
+// Keeps one page's crash from blanking the whole Studio.
+class PageBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidUpdate(prev) { if (prev.page !== this.props.page && this.state.error) this.setState({ error: null }); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="card" style={{ borderColor: '#fecdd3' }}>
+        <div className="row"><AlertTriangle size={18} color="#e11d48" /><b>This page hit an error</b></div>
+        <pre className="code" style={{ marginTop: 10 }}>{String(this.state.error?.message ?? this.state.error)}</pre>
+        <button className="btn" style={{ marginTop: 12 }} onClick={() => this.setState({ error: null })}>Try again</button>
+      </div>
+    );
+  }
+}
+
 export default function App() {
   const [s, dispatch] = useLive();
   const [page, setPage] = useState(() => location.hash.slice(1) || 'mission');
@@ -102,7 +119,7 @@ export default function App() {
             <div className="spacer" />
             {s.ready && <HealthPills s={s} />}
           </div>
-          <div className="page" key={current.id}>{body}</div>
+          <div className="page" key={current.id}><PageBoundary page={current.id}>{body}</PageBoundary></div>
         </main>
       </div>
       <div className="toasts">

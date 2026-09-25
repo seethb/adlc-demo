@@ -94,7 +94,7 @@ export default function EdgeOps({ s }) {
               <div className="feed-item" key={a.id}>
                 <Badge tone={sevTone[a.severity]}>{a.severity}</Badge>
                 <div className="main-t"><b>{a.assetId}</b> {a.failureMode.replace(/_/g, ' ')} <span className="dim">· {a.rule} · {a.metrics.map(m => `${m.metric} ${m.value}`).join(', ')}</span></div>
-                <span className="t">{a.ts.slice(11, 19)}</span>
+                <span className="t">{fmt.time(a.ts)}</span>
               </div>
             ))}
             {!ed.anomalies.length && <Empty>All quiet.</Empty>}
@@ -133,7 +133,7 @@ export default function EdgeOps({ s }) {
             {!ed.requisitions.length && <span className="dim" style={{ fontSize: 12.5 }}>No requisitions — stock above reorder points ({low.length} low).</span>}
             <div className="divider" />
             <div className="row"><ShieldAlert size={15} color="#e11d48" /><b style={{ fontSize: 13 }}>Telemetry security</b></div>
-            {(ed.security?.events ?? []).slice(0, 6).map((e, i) => <div key={i} className="dim" style={{ fontSize: 12 }}>{e.at.slice(11, 19)} · {e.text}</div>)}
+            {(ed.security?.events ?? []).slice(0, 6).map((e, i) => <div key={i} className="dim" style={{ fontSize: 12 }}>{fmt.time(e.at)} · {e.text}</div>)}
             {!ed.security?.events?.length && <span className="dim" style={{ fontSize: 12 }}>No tampered readings yet — try “Send tampered reading” on an asset.</span>}
           </div>
         </Card>
@@ -173,7 +173,7 @@ function AssetDrawer({ s, id, onClose }) {
                 <CartesianGrid stroke="rgba(15,23,42,0.06)" vertical={false} />
                 <XAxis dataKey="ts" hide />
                 <YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} width={44} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid rgba(15,23,42,0.12)', boxShadow: '0 8px 24px rgba(15,23,42,0.1)', borderRadius: 10, fontSize: 12 }} labelFormatter={v => String(v).slice(11, 19)} />
+                <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid rgba(15,23,42,0.12)', boxShadow: '0 8px 24px rgba(15,23,42,0.1)', borderRadius: 10, fontSize: 12 }} labelFormatter={v => fmt.time(v)} />
                 {LIMITS[m] && <ReferenceLine y={LIMITS[m][0]} stroke="#f59e0b" strokeDasharray="4 4" />}
                 {LIMITS[m] && <ReferenceLine y={LIMITS[m][1]} stroke="#f43f5e" strokeDasharray="4 4" />}
                 <Line type="monotone" dataKey={m} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={2} isAnimationActive={false} />

@@ -20,6 +20,8 @@ import { redact } from '../security/privacy.js';
 const run$ = promisify(execFile);
 const sha = t => createHash('sha256').update(t).digest('hex').slice(0, 12);
 const STAGES = ['plan', 'design', 'develop', 'test', 'review', 'deploy'];
+// Human-facing timestamps (PR comments, reports) are in India Standard Time.
+const ist = (d = new Date()) => `${new Date(d).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} IST`;
 
 state.runs ??= {};
 state.artifacts ??= {};
@@ -206,7 +208,7 @@ ${tok}
 |---|---|---|
 ${rows || '| – | – | – |'}
 ${gate.evals.length ? `\n| | Eval | Score | Detail |\n|---|---|---|---|\n${evals}\n` : ''}${extraMd}${recalled}
-<sub>ADLC run \`${run.id}\` · ${new Date().toISOString()}</sub>`;
+<sub>ADLC run \`${run.id}\` · ${ist()}</sub>`;
 }
 
 async function publishStatus(run, context, stateName, description, agent) {
@@ -390,7 +392,7 @@ async function stageTest(run, f) {
   gate.pass = !guard.blocking(gate.guardrails).length && gate.evals.every(e => e.pass);
   const table = `\n| | Acceptance criterion | Result |\n|---|---|---|\n${acc.tests.map(t => `| ${t.ok ? '✅' : '❌'} | ${t.ac ?? ''} | ${t.name.replace(/^AC-F\d\d-\d+\s*/, '')} |`).join('\n')}\n\n**Behavioural eval:** ${beh.detail}\n`;
   econ.record({ run: run.id, feature: f.id, stage: 'test', agent: agent.id, llm: false, reused: false, mekoIn: 0, baselineIn: 0, output: 0, recalled: 0, written: 0, edges: [] });
-  const report = `# ${f.id} test report\n\nRun ${run.id} · ${new Date().toISOString()}\n${table}`;
+  const report = `# ${f.id} test report\n\nRun ${run.id} · ${ist()}\n${table}`;
   await setStageLabel(run, 'test');
   await commit(run, [{ path: `specs/features/${f.slug}/test-report.md`, content: report }], `test(${f.id}): ${acc.passed}/${acc.total} acceptance · behavioural ${beh.score}`, agent);
   await gh.comment(run.pr, gateComment(run, 'test', agent, gate, null, table), agent);

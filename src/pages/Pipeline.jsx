@@ -84,7 +84,7 @@ export default function Pipeline({ s, go }) {
                 <div className="feed-item" key={i}>
                   {l.level === 'error' ? <XCircle size={14} color="#e11d48" /> : l.level === 'success' ? <CheckCircle2 size={14} color="#16a34a" /> : l.level === 'warn' ? <AlertTriangle size={14} color="#d97706" /> : <Zap size={14} color="#7c3aed" />}
                   <div style={{ whiteSpace: 'normal' }}><Badge tone="gray">{l.stage}</Badge> {l.message}</div>
-                  <span className="t">{l.at.slice(11, 19)}</span>
+                  <span className="t">{fmt.time(l.at)}</span>
                 </div>
               ))}
             </div>
@@ -184,7 +184,7 @@ function StageDrawer({ s, open, onClose, setOpen }) {
         </Card>
       )}
 
-      {st.approval && <Card title="Release approval" icon={<Rocket size={16} color="#c026d3" />}><div>{st.approval.rejected ? 'Rejected' : 'Approved'} by <b>{st.approval.by}</b> at {st.approval.at?.slice(0, 19).replace('T', ' ')} UTC{st.approval.note ? ` — “${st.approval.note}”` : ''}</div></Card>}
+      {st.approval && <Card title="Release approval" icon={<Rocket size={16} color="#c026d3" />}><div>{st.approval.rejected ? 'Rejected' : 'Approved'} by <b>{st.approval.by}</b> at {fmt.dateTime(st.approval.at)}{st.approval.note ? ` — “${st.approval.note}”` : ''}</div></Card>}
 
       {st.recalled?.length > 0 && (
         <Card title={`Recalled from Meko (${st.recalled.length})`} hint="team memory this agent reused instead of re-reading the repo" icon={<Brain size={16} color="#7c3aed" />}>

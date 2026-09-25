@@ -40,7 +40,7 @@ export default function Trust({ s }) {
         </Card>
         <Card title="Recent redactions" hint="type and destination only" icon={<Lock size={16} />}>
           <div className="feed" style={{ maxHeight: 300 }}>
-            {p.recent.map((e, i) => <div key={i} className="feed-item"><Badge tone={{ claude: 'amber', meko: 'violet', github: 'gray', preview: 'cyan', internal: 'blue' }[e.dest] ?? 'gray'}>{e.dest}</Badge><div className="main-t">{e.types.join(', ')} × {e.count}</div><span className="t">{e.at.slice(11, 19)}</span></div>)}
+            {p.recent.map((e, i) => <div key={i} className="feed-item"><Badge tone={{ claude: 'amber', meko: 'violet', github: 'gray', preview: 'cyan', internal: 'blue' }[e.dest] ?? 'gray'}>{e.dest}</Badge><div className="main-t">{e.types.join(', ')} × {e.count}</div><span className="t">{fmt.time(e.at)}</span></div>)}
             {!p.recent.length && <Empty icon={<Lock />}>Nothing personal has tried to leave the Studio.</Empty>}
           </div>
         </Card>

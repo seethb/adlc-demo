@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { FileText, CheckCircle2, CircleDashed, Rocket, ExternalLink, BookOpen } from 'lucide-react';
 import { Card, Avatar, Badge, Tabs, Markdown, Empty } from '../components/ui.jsx';
-import { api } from '../api.js';
+import { api, fmt } from '../api.js';
 import { agentOf, latestRun } from '../lib.js';
 
 export default function Specs({ s }) {
@@ -53,7 +53,7 @@ export default function Specs({ s }) {
               return <tr key={ac.id}><td style={{ width: 26 }}>{t ? (t.ok ? <CheckCircle2 size={15} color="#16a34a" /> : <CircleDashed size={15} color="#e11d48" />) : <CircleDashed size={15} className="dim" />}</td><td className="mono" style={{ width: 90 }}>{ac.id}</td><td>{ac.text}</td></tr>;
             })}</tbody></table>
           </Card>
-          <Card title={tab === 'spec' ? 'Specification' : tab === 'develop' ? f.module : `${tab}.md`} hint={tab !== 'spec' && art[tab] ? `run ${art[tab].run} · ${art[tab].at?.slice(0, 16).replace('T', ' ')}` : ''}>
+          <Card title={tab === 'spec' ? 'Specification' : tab === 'develop' ? f.module : `${tab}.md`} hint={tab !== 'spec' && art[tab] ? `run ${art[tab].run} · ${fmt.dateTime(art[tab].at)}` : ''}>
             {tab === 'spec' ? <Markdown text={doc?.spec?.replace(/^---[\s\S]*?---\n/, '')} />
               : art[tab] ? (tab === 'develop' ? <pre className="code">{art[tab].text}</pre> : <Markdown text={art[tab].text} />)
               : <Empty>Not produced yet — run {f.id} in the Pipeline.</Empty>}

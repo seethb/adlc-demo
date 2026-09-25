@@ -34,7 +34,7 @@ export default function Mission({ s, go }) {
         <Stat label="LLM spend avoided" icon={<Coins size={14} color="#16a34a" />} value={fmt.usd(e.costSaved ?? 0)} foot={`${fmt.usd(e.costMeko)} spent vs ${fmt.usd(e.costBaseline)} baseline`} sparkColor="#22c55e" spark={tl.map(t => t.baseline)} />
         <Stat label="Cross-agent memory reuse" icon={<Recycle size={14} color="#0891b2" />} value={fmt.n(e.crossAgentReuse ?? 0)} foot={`${fmt.n(e.memoriesWritten)} written · ${fmt.n(e.reusedArtifacts)} artifacts reused`} sparkColor="#06b6d4" />
         <Stat label="Gates passed" icon={<ShieldCheck size={14} color="#16a34a" />} value={`${passed}/${decided || 0}`} foot="guardrails + evals on every stage" />
-        <Stat label="Features in edge-staging" icon={<Rocket size={14} color="#c026d3" />} value={`${deployed}/6`} foot={deployed ? `latest ${Object.values(s.deployments).sort((a, b) => b.at.localeCompare(a.at))[0]?.at.slice(11, 16)} UTC` : 'waiting for first release'} />
+        <Stat label="Features in edge-staging" icon={<Rocket size={14} color="#c026d3" />} value={`${deployed}/6`} foot={deployed ? `latest ${fmt.hm(Object.values(s.deployments).sort((a, b) => b.at.localeCompare(a.at))[0]?.at)}` : 'waiting for first release'} />
       </div>
 
       <div className="grid g-3-2">

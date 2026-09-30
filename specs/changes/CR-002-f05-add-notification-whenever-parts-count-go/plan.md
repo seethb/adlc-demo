@@ -1,43 +1,39 @@
-# CR-002 Impact Analysis — F05 Notification on Low Parts Count
+# CR-002 Impact Analysis — F05 Spare-parts inventory tracking
 
 ## Summary
-Adds a low-stock notification to F05 Spare-parts inventory tracking: when the inventory is viewed and any SKU's available quantity is below 5, a notification is surfaced. No existing behavior changes.
+Adds a low-stock notification to F05: when inventory is viewed, any SKU with `available(sku) < 5` surfaces a notification. No change to `createInventory` signature or existing behaviors.
 
 ## Motivation
-Operators currently discover low stock only via requisitions, not proactively. A visible alert at view-time raises awareness and reduces stall risk on work orders (per AC-CR002-1).
+Users need an alert when stock drops below 5 to raise awareness before a work order stalls, per CR-002's stated need to "raise an alert."
 
 ## Impact
-**Changes** in `edge/features/F05-inventory/index.js`:
-- The view/inspection path (backed by `list()`/`lowStock()`) is augmented so that calling it computes, for each SKU, whether `available(sku) < 5`, and emits a `notifications` array (or equivalent field) alongside existing output when threshold is breached.
-- No new exported function; `createInventory` signature and existing methods (`reserve`, `release`, `consume`, `receive`, `available`, `list`, `lowStock`, `requisitions`, `reservations`) are unchanged in shape and semantics.
+**Changes in `edge/features/F05-inventory/index.js`:**
+- Extend the viewing path (`list()`/`lowStock()`) to compute a `notification` flag/list for any SKU with `available(sku) < 5`.
+- No new exports; `createInventory` return shape unchanged except for the added notification surfaced via existing `list()`/`lowStock()`.
 
-**Stays unchanged**:
-- `createInventory(parts?)` contract shape.
-- Reservation, release, consume, requisition, and receive logic and their negative-availability guarantees (AC-F05-1..4).
-- Unknown SKU error behavior (AC-F05-5).
-- Timestamps remain ISO-8601 UTC strings per org standard; numeric telemetry rounded to 3 decimals.
+**Stays the same:**
+- `createInventory(parts?)` signature and all method names/signatures (`reserve`, `release`, `consume`, `receive`, `available`, `requisitions`, `reservations`).
+- Reservation math, requisition creation/closing, receiving logic, and unknown-SKU error behavior are untouched.
 
 ## Acceptance-criteria traceability
 
-| AC ID | Description | Verification |
+| AC id | Description | Verification |
 |---|---|---|
-| AC-CR002-1 | Notification pops up when viewing inventory and a SKU's count is below 5 | New unit test: seed SKU below 5, call view/list, assert notification present; assert absent when ≥5 |
-| AC-CR002-2 | Regression: AC-F05-1..5 unchanged | Full existing F05 test suite re-run, no modifications to assertions |
-| AC-F05-1 | Reservations never drive availability negative; shortfall reported | Existing test suite, unchanged |
-| AC-F05-2 | Release returns stock; reduces on-hand, clears reservation | Existing test suite, unchanged |
-| AC-F05-3 | Exactly one open requisition per SKU at/below reorder point | Existing test suite, unchanged |
-| AC-F05-4 | Receiving a requisition restocks and closes it | Existing test suite, unchanged |
-| AC-F05-5 | Unknown SKUs throw | Existing test suite, unchanged |
+| AC-CR002-1 | Notification pops up when viewing inventory and count < 5 | New test: seed SKU below 5, call `list()`/`lowStock()`, assert notification present |
+| AC-CR002-2 | Regression: AC-F05-1..5 unchanged | Full existing F05 test suite re-run, no modifications, all pass |
+| AC-F05-1 | Reservations never drive availability negative | Existing suite |
+| AC-F05-2 | `release`/`consume` returns/reduces stock, clears reservation | Existing suite |
+| AC-F05-3 | Exactly one open requisition per SKU at reorder point | Existing suite |
+| AC-F05-4 | Receiving restocks and closes requisition | Existing suite |
+| AC-F05-5 | Unknown SKUs throw | Existing suite |
 
 ## Risks & rollback
-- Risk: notification computation could inadvertently mutate state or slow the view path — mitigated by keeping it a pure read derived from `available()`.
-- Rollback: revert the single commit touching `index.js`; no schema/data migration involved, so rollback is safe and immediate.
+- Risk: notification logic accidentally alters `list()`/`lowStock()` output shape, breaking consumers — mitigate by additive field only.
+- Risk: threshold hardcoded as 5 diverges from per-SKU reorder point — document as intentional, separate from AC-F05-3 reorder logic.
+- Rollback: revert `index.js` to prior commit; no data migration involved, no contract change to undo.
 
 ## Rollout
-Deployed to `edge-staging` via Helm after human approval; edge gateway restarts to load the new build. No feature flag; behavior change is additive and low-risk.
+Released to `edge-staging` via Helm after human approval; edge gateway restarts on the new build (per CR-002 rollout spec).
 
 ## Definition of done
-- AC-CR002-1 and AC-CR002-2 pass.
-- Full AC-F05-1..5 regression suite passes unchanged.
-- Code review confirms `createInventory` contract shape untouched.
-- Deployed to edge-staging, gateway restarted, smoke-tested.
+- AC-CR002-1 and AC-CR002-2 test cases pass; full AC-F05-1..5 regression suite green; code reviewed; deployed to `edge-staging` with gateway restart confirmed.

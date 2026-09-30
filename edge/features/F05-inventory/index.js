@@ -1,8 +1,17 @@
 // F05 · Spare-parts inventory tracking
 // Pure ES module, no I/O, no deps. See specs/features/F05-inventory/design.md.
+// CR-002: adds low-stock notifications (AC-CR002-1) without changing any
+// existing behaviour (AC-CR002-2 / AC-F05-1..5 regression).
 
 function isPositiveInt(n) {
   return Number.isFinite(n) && Number.isInteger(n) && n > 0;
+}
+
+// CR-002: fixed threshold, decoupled from per-SKU reorderPoint (see design delta).
+const LOW_STOCK_THRESHOLD = 5;
+
+function isLowStock(avail) {
+  return avail < LOW_STOCK_THRESHOLD;
 }
 
 export function createInventory(parts = []) {
@@ -102,16 +111,31 @@ export function createInventory(parts = []) {
   }
 
   function list() {
-    return [...stock.entries()].map(([sku, s]) => ({
-      sku,
-      onHand: s.onHand,
-      reserved: s.reserved,
-      available: s.onHand - s.reserved,
-    }));
+    // AC-CR002-1: each item now also carries `notify` computed on every read
+    // (no caching / no side effects), so viewing the inventory always
+    // reflects current low-stock state relative to the fixed threshold.
+    return [...stock.entries()].map(([sku, s]) => {
+      const avail = s.onHand - s.reserved;
+      return {
+        sku,
+        onHand: s.onHand,
+        reserved: s.reserved,
+        available: avail,
+        notify: isLowStock(avail),
+      };
+    });
   }
 
   function lowStock() {
-    return list().filter((i) => i.available <= stock.get(i.sku).reorderPoint);
+    // Unchanged: per-SKU reorderPoint based low-stock view (AC-F05-3).
+    return [...stock.entries()]
+      .map(([sku, s]) => ({
+        sku,
+        onHand: s.onHand,
+        reserved: s.reserved,
+        available: s.onHand - s.reserved,
+      }))
+      .filter((i) => i.available <= stock.get(i.sku).reorderPoint);
   }
 
   function requisitions() {
@@ -120,6 +144,23 @@ export function createInventory(parts = []) {
 
   function reservations() {
     return [...reservationsMap.entries()].map(([ref, r]) => ({ ref, ...r }));
+  }
+
+  function notifications() {
+    // AC-CR002-1: derived read-only view; no stored state, no side effects,
+    // reuses the same fixed threshold as list()'s `notify` field.
+    const out = [];
+    for (const [sku, s] of stock.entries()) {
+      const avail = s.onHand - s.reserved;
+      if (isLowStock(avail)) {
+        out.push({
+          sku,
+          available: avail,
+          message: `Low stock: SKU ${sku} has ${avail} available`,
+        });
+      }
+    }
+    return out;
   }
 
   return {
@@ -132,5 +173,6 @@ export function createInventory(parts = []) {
     lowStock,
     requisitions,
     reservations,
+    notifications,
   };
 }

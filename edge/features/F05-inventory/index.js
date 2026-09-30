@@ -1,6 +1,6 @@
 // F05 · Spare-parts inventory tracking
 // Pure ES module, no I/O, no deps. See specs/features/F05-inventory/design.md.
-// CR-002: adds low-stock notification field on list() (AC-CR002-1, AC-CR002-2).
+// CR-002: adds `notification` field (available < 5) to list()/lowStock() items.
 
 function isPositiveInt(n) {
   return Number.isFinite(n) && Number.isInteger(n) && n > 0;
@@ -102,11 +102,10 @@ export function createInventory(parts = []) {
     return true;
   }
 
+  // AC-CR002-1: viewing the inventory (list()) surfaces a `notification` flag
+  // whenever available stock for a SKU drops below 5. This threshold is
+  // intentionally separate from the per-SKU reorderPoint used by AC-F05-3.
   function list() {
-    // AC-CR002-1: viewing inventory surfaces a notification when available
-    // stock for a sku drops below the fixed threshold of 5, independent of
-    // that sku's reorderPoint. Additive field only; all other fields and
-    // ordering are unchanged (AC-CR002-2 regression safety).
     return [...stock.entries()].map(([sku, s]) => {
       const avail = s.onHand - s.reserved;
       return {
@@ -114,15 +113,13 @@ export function createInventory(parts = []) {
         onHand: s.onHand,
         reserved: s.reserved,
         available: avail,
-        notification: avail < 5 ? `low stock: ${sku} (${avail} < 5)` : null,
+        notification: avail < 5,
       };
     });
   }
 
   function lowStock() {
-    return list()
-      .filter((i) => i.available <= stock.get(i.sku).reorderPoint)
-      .map(({ sku, onHand, reserved, available }) => ({ sku, onHand, reserved, available }));
+    return list().filter((i) => i.available <= stock.get(i.sku).reorderPoint);
   }
 
   function requisitions() {

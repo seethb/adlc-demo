@@ -1,6 +1,8 @@
 // F06 — Natural-language asset queries (NLQ)
 // Pure planner + health scorer. No I/O, no network, no eval (org standard ADR-001).
 // Grounded fleet metadata is imported from the reference fleet definitions only.
+// BUG-001: adds status-clarification formatting via answerFromSnapshot/isLive.
+// parseQuery/healthScore contracts are unchanged (AC-BUG001-2).
 import { FLEET, ASSET_TYPES } from '../../reference/fleet.js';
 
 // ---- normalize -------------------------------------------------------
@@ -118,7 +120,7 @@ function resolveAssets(assetIds, assetTypes, fleet) {
   return fleet.map((a) => a.id);
 }
 
-// ---- exported: parseQuery (AC-F06-1..3) -----------------------------------
+// ---- exported: parseQuery (AC-F06-1..3, AC-BUG001-2: unchanged shape) ----
 export function parseQuery(text, fleet = FLEET) {
   const normText = normalize(text);
   const intent = resolveIntent(normText);
@@ -131,7 +133,7 @@ export function parseQuery(text, fleet = FLEET) {
   return { intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets };
 }
 
-// ---- exported: healthScore (AC-F06-4) -------------------------------------
+// ---- exported: healthScore (AC-F06-4, AC-BUG001-2: unchanged logic) ------
 // Deviation-weighted scoring against reference nominal ranges (mean, sigma).
 // Half-sigma tolerance band absorbs normal sensor noise; deviations beyond
 // that accumulate and are mapped through an exponential decay so a single
@@ -159,4 +161,50 @@ export function healthScore(assetType, metrics) {
 
   const score = 100 * Math.exp(-sumD / 2);
   return Math.max(0, Math.min(100, Math.round(score * 100) / 100));
+}
+
+// ---- BUG-001: status clarification helpers --------------------------------
+// isLive(asset) — internal, not exported. Reads asset.status defensively;
+// falls back to `!asset.openAnomaly` when status is absent, and defaults to
+// "Not Live" for missing/non-boolean signals (reject untrusted telemetry,
+// IoT security standard). Read-only: never mutates asset/snapshot.
+function isLive(asset) {
+  if (!asset || typeof asset !== 'object') return false;
+  if (typeof asset.status === 'boolean') return asset.status;
+  if (typeof asset.status === 'string') {
+    const s = asset.status.toLowerCase();
+    if (s === 'live' || s === 'up' || s === 'online') return true;
+    if (s === 'not live' || s === 'down' || s === 'offline') return false;
+  }
+  if ('openAnomaly' in asset) return !asset.openAnomaly;
+  return false;
+}
+
+// ---- exported: answerFromSnapshot (AC-BUG001-1) ---------------------------
+// (plan, snapshot) -> string. Additive branch only: fires for `condition`
+// intent queries with no explicit metrics requested (generic "how is X" /
+// "is X live" phrasing), per the design delta. Metric-specific `condition`
+// queries and all other intents are untouched by callers of this helper —
+// parseQuery/healthScore themselves are not modified (AC-BUG001-2).
+export function answerFromSnapshot(plan, snapshot) {
+  const assets = Array.isArray(snapshot?.assets) ? snapshot.assets : [];
+
+  if (plan?.intent === 'condition' && Array.isArray(plan.metrics) && plan.metrics.length === 0) {
+    const resolved = new Set(plan.resolvedAssets ?? []);
+    const lines = assets
+      .filter((a) => resolved.size === 0 || resolved.has(a.id))
+      .map((a) => `Asset ${a.id} - ${isLive(a) ? 'Live' : 'Not Live'}`);
+    return lines.join(' ');
+  }
+
+  // Fallback for non-status condition queries / other intents: preserve
+  // prior generic behaviour shape (health-score based summary per asset).
+  const resolved = new Set(plan?.resolvedAssets ?? []);
+  const lines = assets
+    .filter((a) => resolved.size === 0 || resolved.has(a.id))
+    .map((a) => {
+      const score = healthScore(a.type, a.metrics ?? {});
+      return `Asset ${a.id} health ${score}/100`;
+    });
+  return lines.join(' ');
 }

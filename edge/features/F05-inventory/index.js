@@ -1,8 +1,17 @@
 // F05 · Spare-parts inventory tracking
 // Pure ES module, no I/O, no deps. See specs/features/F05-inventory/design.md.
+// CR-002: adds low-stock notifications (AC-CR002-1) without altering prior
+// behaviour (AC-CR002-2, regression of AC-F05-1..5).
 
 function isPositiveInt(n) {
   return Number.isFinite(n) && Number.isInteger(n) && n > 0;
+}
+
+// CR-002: fixed threshold, independent of per-SKU reorderPoint (team decision).
+const LOW_STOCK_THRESHOLD = 5;
+
+function isLowStock(avail) {
+  return avail < LOW_STOCK_THRESHOLD;
 }
 
 export function createInventory(parts = []) {
@@ -102,16 +111,40 @@ export function createInventory(parts = []) {
   }
 
   function list() {
-    return [...stock.entries()].map(([sku, s]) => ({
-      sku,
-      onHand: s.onHand,
-      reserved: s.reserved,
-      available: s.onHand - s.reserved,
-    }));
+    // AC-CR002-1: each item carries a `notify` flag computed on every view,
+    // no caching, no side effects. Threshold is fixed (LOW_STOCK_THRESHOLD),
+    // decoupled from reorderPoint.
+    return [...stock.entries()].map(([sku, s]) => {
+      const avail = s.onHand - s.reserved;
+      return {
+        sku,
+        onHand: s.onHand,
+        reserved: s.reserved,
+        available: avail,
+        notify: isLowStock(avail),
+      };
+    });
   }
 
   function lowStock() {
     return list().filter((i) => i.available <= stock.get(i.sku).reorderPoint);
+  }
+
+  // AC-CR002-1: derived read of all SKUs currently below the fixed low-stock
+  // threshold; no stored state, recomputed on every call.
+  function notifications() {
+    const out = [];
+    for (const [sku, s] of stock.entries()) {
+      const avail = s.onHand - s.reserved;
+      if (isLowStock(avail)) {
+        out.push({
+          sku,
+          available: avail,
+          message: `Low stock: SKU ${sku} has ${avail} available`,
+        });
+      }
+    }
+    return out;
   }
 
   function requisitions() {
@@ -132,5 +165,6 @@ export function createInventory(parts = []) {
     lowStock,
     requisitions,
     reservations,
+    notifications,
   };
 }

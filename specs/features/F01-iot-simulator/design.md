@@ -1,51 +1,69 @@
 # F01 · IoT telemetry simulator — Design
 
-## Module structure
-`edge/features/F01-iot-simulator/index.js` (pure ESM, no I/O, no network).
+## Module structure (`edge/features/F01-iot-simulator/index.js`)
+Pure ES module, no I/O, no transport.
 
-Internal state (closure per `createSimulator` instance):
-- `rng` — seeded PRNG (mulberry32-style) derived from `seed`; all randomness flows through it (AC-F01-2).
-- `clockMs` — current simulated time, initialized from `startTs` (default epoch 0), advanced by `stepMs` (default 1000) each `tick()`.
-- `fleet` — asset list from `edge/reference/fleet.js` (or injected `assets`), each `{ id, type, metrics: { [metric]: { mean, sigma } } }`.
-- `faultState` — `Map<assetId, { fault, ticksSinceInject }>` tracking active faults and degradation progress.
+**Exported:**
+- `createSimulator({ seed, assets?, startTs?, stepMs? })` — factory, returns instance.
 
-Internal helpers:
-- `gaussian(rng)` — Box-Muller sample using `rng`.
-- `nominalReading(asset)` — samples each metric within N(mean, σ), clamps to 4.5σ (AC-F01-1, AC-F01-3).
-- `applyFaultProfile(asset, fault, ticks, reading)` — mutates signature metrics per fault-type table, magnitude grows with `ticks` (AC-F01-4).
-- `validateAsset(assetId)` / `validateFault(assetId, fault)` — throw `RangeError`/`TypeError` on unknown asset or inapplicable fault (AC-F01-5).
-- `round3(x)` — rounds metric values to 3 decimals per org numeric standard.
+**Instance methods:**
+- `tick()` → `Reading[]`
+- `inject(assetId, fault)`
+- `clear(assetId)`
+- `activeFaults()` → `{ [assetId]: fault|null }`
+- `assets` — resolved fleet array (from `edge/reference/fleet.js` unless overridden)
 
-## Contract
-```js
-createSimulator({ seed, assets?, startTs?, stepMs? }) => {
-  tick(): Reading[],
-  inject(assetId, fault): void,
-  clear(assetId): void,
-  activeFaults(): { [assetId]: string },
-  assets
-}
-Reading = { ts: ISO-8601, assetId, type, metrics: { [metric]: number }, fault: string|null }
+**Internal helpers (not exported):**
+- `makeRng(seed)` — mulberry32-style deterministic PRNG.
+- `gaussian(rng, mean, sigma)` — Box-Muller sample, clamped to ±4.5σ for healthy state.
+- `validateAsset(assetId)` / `validateFault(assetId, fault)` — throw `RangeError` on unknown.
+- `degrade(fault, elapsedTicks)` — monotonic drift curve applied to signature metrics.
+- `round3(n)` — 3-decimal rounding per org numeric standard.
+
+**Internal state (closure, per instance):**
+- `rng` (seeded generator), `clock` (current ts, advanced by `stepMs`, default 1000ms)
+- `faultState: Map<assetId, { fault, since }>`
+- `tickCount`
+
+## Contract signatures
 ```
-`tick()` advances `clockMs` by `stepMs`, then returns one `Reading` per asset in `fleet` order.
+createSimulator({ seed: number, assets?: Asset[], startTs?: string, stepMs?: number })
+  -> {
+    tick(): Reading[],
+    inject(assetId: string, fault: string): void,
+    clear(assetId: string): void,
+    activeFaults(): { [assetId: string]: string|null },
+    assets: Asset[]
+  }
+
+Reading = {
+  ts: string,          // ISO-8601
+  assetId: string,
+  type: string,
+  metrics: { [metric: string]: number },
+  fault: string|null
+}
+```
 
 ## AC → design mapping
 | AC | Design element |
 |---|---|
-| AC-F01-1 | `tick()` iterates full `fleet`, calls `nominalReading` for every metric of that asset's type; `fault` field set from `faultState` or `null` |
-| AC-F01-2 | Single seeded `rng` instance, no `Math.random`/`Date.now`; identical `seed`+params ⇒ identical byte-for-byte stream |
-| AC-F01-3 | `nominalReading` clamps every sampled metric to ±4.5σ around `mean` before rounding |
-| AC-F01-4 | `inject()` sets `faultState`; `applyFaultProfile` scales signature-metric deviation with `ticksSinceInject`; `clear()` deletes the entry, restoring nominal sampling next tick |
-| AC-F01-5 | `validateAsset`/`validateFault` throw before mutating state; unknown `assetId` or fault not in that asset type's applicable-fault list is rejected |
+| AC-F01-1 | `tick()` iterates `assets` once, builds one `Reading` per asset with every nominal metric from fleet definition; `fault: null` unless `faultState` has entry |
+| AC-F01-2 | `rng` seeded once from `seed`; no `Math.random`/`Date.now`; identical seed ⇒ identical draw sequence |
+| AC-F01-3 | `gaussian` clamps healthy samples to ±4.5σ around nominal mean per metric |
+| AC-F01-4 | `inject` sets `faultState`; `tick` calls `degrade` to progressively shift signature metrics with elapsed ticks and labels `fault`; `clear` deletes entry, restoring nominal distribution |
+| AC-F01-5 | `validateAsset`/`validateFault` throw before mutating state on unknown asset id or fault not applicable to asset type |
 
 ## Security & data classification
-- Output readings are **C2 Confidential** (raw telemetry) per org data classification — must stay in the edge 7-day ring buffer; this module itself performs no persistence or transport, leaving storage/egress to downstream features.
-- The module is a **pure generator with no OT connection**: it never reads or writes PLC/OPC-UA/setpoints, satisfying read-only-towards-OT by construction (there is no OT link to violate).
-- Input validation treats `createSimulator` args and `inject`/`clear` calls as untrusted: reject non-finite `stepMs`/`startTs`, unknown `assetId`, unknown/inapplicable `fault` names — all throw synchronously (AC-F01-5), matching the "treat telemetry as untrusted input" standard applied to configuration inputs here.
-- No PII is ever generated or accepted; only pseudonymous `assetId`s appear, never operator names.
-- No credentials, keys or transport are handled by this module (out of scope per spec); any future MQTT publisher wrapping this simulator must use mTLS 1.2+/8883 per org standard.
+- Output readings are **C2 Confidential** raw telemetry (per org data classification), even though simulated — treated identically to real plant data for downstream consumers.
+- Data is **edge-resident only**: this module produces in-memory objects; it performs no network calls, storage, or cloud egress. Only 1-minute aggregates/anomalies (F02+) may leave the OT zone — not this module's concern, but it must not shortcut that boundary.
+- **Read-only towards OT**: the module never writes to, commands, or controls any device; it only simulates sensor output for consumption by other features. No actuation surface exists.
+- **Input validation** (OWASP IoT I5, treat as untrusted input): reject non-finite values (`NaN`/`Infinity`) surfacing from PRNG edge cases; `validateAsset` rejects unknown `assetId`; `validateFault` rejects faults not defined for the asset's type; `createSimulator` validates `seed` is present and numeric.
+- Header comment must explicitly reference the IoT security standard and C2/edge-only/read-only stance for audit purposes.
+- No PII: readings carry only `assetId`, never operator/technician identifiers.
 
 ## Reused team decisions
-- Data classification table (C0–C3) and edge-only residency rule for raw telemetry — reused verbatim to mark simulator output as C2, edge-resident.
-- IoT security standard "read-only towards OT" and "untrusted input" rules — reused to justify no-OT-write guarantee and strict validation in `inject`/`clear`.
-- Numeric rounding-to-3-decimals convention and pseudonymous-id-only rule — reused from org standards for the `Reading` shape.
+- Data shape for `Reading` and `createSimulator` signature taken verbatim from spec/plan (Meko: F01 design + orion's AC-F01-1 test note).
+- C2 classification, edge-only residency, and read-only-towards-OT header requirement per orion's F01/develop decision and org data-classification table.
+- Input validation rules (finite values, unknown asset/fault rejection) per org IoT security standard and sentinel's F01/review decision to reference it in comments.
+- Privacy standard: no operator/technician names anywhere in output, only asset ids.

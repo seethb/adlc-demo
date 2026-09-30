@@ -1,35 +1,31 @@
-# Design Delta — CR-002: Low-stock notification (F05)
-Module: `edge/features/F05-inventory/index.js`
+# CR-002 Design Delta — F05 Spare-parts inventory tracking
 
 ## Changed functions & internal state
-- `list()`: behavior extended (not signature) — each returned item gains a `notification` field. No new internal state (`stock`, `reservationsMap`, `requisitionsMap`, `reqCounter` unchanged); notification is derived purely from existing `onHand`/`reserved`, no mutation.
-- `lowStock()`: unchanged filter logic (`available <= reorderPoint`), still used for requisition triggering — NOT reused for the CR-002 threshold since the notification uses a fixed threshold of 5, independent of `reorderPoint`.
-- No new exported functions; `createInventory` return object shape unchanged (`reserve, release, consume, receive, available, list, lowStock, requisitions, reservations`).
+No new exports, no new internal state (no counters, maps, or fields added). Two functions gain additive logic:
 
-## Exact data shapes (changed)
-`list()` item, previously:
-```
-{ sku, onHand, reserved, available }
-```
-Now:
-```
-{ sku, onHand, reserved, available, notification: string | null }
-```
-`notification` is `` `low stock: ${sku} (${available} < 5)` `` when `available < 5`, else `null`. Array order and all other fields unchanged. `lowStock()` output shape is untouched: `{ sku, onHand, reserved, available }[]`.
+- **`list()`**: for each item, add a `notification` boolean computed as `available < 5`. Existing fields (`sku`, `onHand`, `reserved`, `available`) unchanged.
+- **`lowStock()`**: unchanged filter (`available <= reorderPoint`), but each returned item now also carries the `notification` field from `list()`'s shape (derived inline, not from new state).
+
+## Exact data shapes (changed return values)
+
+`list()` → `Array<{ sku: string, onHand: number, reserved: number, available: number, notification: boolean }>`
+
+`lowStock()` → same item shape as `list()`, filtered subset.
+
+All other return shapes (`reserve`, `release`, `consume`, `receive`, `available`, `requisitions`, `reservations`) are **unchanged**.
 
 ## AC → design mapping
-- **AC-CR002-1**: Viewing inventory (`list()`) computes `available(sku) < 5` per item and sets `notification`; a UI/consumer polling `list()` on each view sees the alert without new API surface.
-- **AC-CR002-2**: `reserve`, `release`, `consume`, `receive`, `available`, `requisitions`, `reservations`, and `lowStock` bodies are byte-for-byte unchanged; only `list()` gains an additive field. Full AC-F05-1..5 suite re-run unmodified confirms no regression.
+
+- **AC-CR002-1** (notification pops up when viewing inventory, count < 5): satisfied by the new `notification` field on `list()`/`lowStock()` items, computed as `available(sku) < 5`. "Viewing the inventory" = calling `list()` or `lowStock()`; no new I/O, module stays pure/synchronous.
+- **AC-CR002-2** (regression AC-F05-1..5 unchanged): guaranteed because `reserve`, `release`, `consume`, `receive`, `available`, `requisitions`, `reservations`, `assertKnownSku`, `maybeRequisition` are untouched — reservation math, requisition lifecycle, and unknown-SKU throw behavior are byte-identical to the current module.
 
 ## Backward compatibility
-`createInventory(parts?)` signature and returned method set are identical. All existing callers destructuring `{ sku, onHand, reserved, available }` from `list()` continue to work — `notification` is an additive field, ignored by callers unaware of it. No caller of `lowStock()`, `reserve()`, `release()`, `consume()`, `receive()`, `available()`, `requisitions()`, `reservations()` is affected.
+
+`createInventory(parts?)` signature and returned method set are unchanged. Every caller depending on `list()`/`lowStock()` item shape continues to work: `notification` is an **additive** field, not a replacement or rename, so destructuring or property access on existing fields (`sku`, `onHand`, `reserved`, `available`, `reorderPoint`-derived filters) is unaffected. No caller of `reserve`, `release`, `consume`, `receive`, `available`, `requisitions`, `reservations` is impacted since those functions are not touched.
 
 ## Security & data classification
-- Same data class as F05 baseline: operational inventory counts (non-PII, low sensitivity), stored only in-memory, no persistence added.
-- Read-only posture toward OT preserved: notification computation reads existing counters, never writes to `stock`/OT-adjacent state.
-- Input validation unchanged: `assertKnownSku` still guards all sku-keyed operations (AC-F05-5); notification path only runs over already-known SKUs from `stock`.
-- No new external transport; notification is an in-process data field, not a network event — no new attack surface.
+
+Notification field carries the same data classification as existing inventory counts (operational/internal, non-sensitive part-count data) — no new data class introduced. No new storage location: notification is computed on-the-fly from in-memory `stock` state, never persisted. Module remains read-only toward OT: no new writes, no new I/O, purely derived view data. Input validation unchanged — `available(sku)` still throws via `assertKnownSku` on unknown SKUs, and the notification threshold (`< 5`) uses only already-validated in-memory quantities, no new external input surface.
 
 ## Reused team decisions
-- CR-002 notification is `available(sku) < 5`, surfaced via the existing `list()`/`lowStock()` view path, per atlas's decision, without changing `createInventory`'s signature.
-- ISO-8601 UTC timestamp and 3-decimal numeric rounding conventions from F05 baseline are unaffected (no timestamps/numerics added here).
+Threshold is hardcoded at `< 5` per CR-002, intentionally distinct from the per-SKU `reorderPoint` used by AC-F05-3 requisition logic. Notification is implemented purely within `edge/features/F05-inventory/index.js` with zero changes to the `createInventory` contract signature or existing method shapes.

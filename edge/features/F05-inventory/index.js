@@ -1,13 +1,13 @@
 // F05 · Spare-parts inventory tracking
 // Pure ES module, no I/O, no deps. See specs/features/F05-inventory/design.md.
-// CR-002: adds low-stock notifications (AC-CR002-1) without altering prior
-// behaviour (AC-CR002-2, regression of AC-F05-1..5).
+// CR-002: adds low-stock notifications (AC-CR002-1) without changing any
+// existing behaviour (AC-CR002-2 / AC-F05-1..5 regression).
 
 function isPositiveInt(n) {
   return Number.isFinite(n) && Number.isInteger(n) && n > 0;
 }
 
-// CR-002: fixed threshold, independent of per-SKU reorderPoint (team decision).
+// CR-002: fixed threshold, decoupled from per-SKU reorderPoint (see design delta).
 const LOW_STOCK_THRESHOLD = 5;
 
 function isLowStock(avail) {
@@ -111,9 +111,9 @@ export function createInventory(parts = []) {
   }
 
   function list() {
-    // AC-CR002-1: each item carries a `notify` flag computed on every view,
-    // no caching, no side effects. Threshold is fixed (LOW_STOCK_THRESHOLD),
-    // decoupled from reorderPoint.
+    // AC-CR002-1: each item now also carries `notify` computed on every read
+    // (no caching / no side effects), so viewing the inventory always
+    // reflects current low-stock state relative to the fixed threshold.
     return [...stock.entries()].map(([sku, s]) => {
       const avail = s.onHand - s.reserved;
       return {
@@ -127,12 +127,28 @@ export function createInventory(parts = []) {
   }
 
   function lowStock() {
-    return list().filter((i) => i.available <= stock.get(i.sku).reorderPoint);
+    // Unchanged: per-SKU reorderPoint based low-stock view (AC-F05-3).
+    return [...stock.entries()]
+      .map(([sku, s]) => ({
+        sku,
+        onHand: s.onHand,
+        reserved: s.reserved,
+        available: s.onHand - s.reserved,
+      }))
+      .filter((i) => i.available <= stock.get(i.sku).reorderPoint);
   }
 
-  // AC-CR002-1: derived read of all SKUs currently below the fixed low-stock
-  // threshold; no stored state, recomputed on every call.
+  function requisitions() {
+    return [...requisitionsMap.values()].map((r) => ({ ...r }));
+  }
+
+  function reservations() {
+    return [...reservationsMap.entries()].map(([ref, r]) => ({ ref, ...r }));
+  }
+
   function notifications() {
+    // AC-CR002-1: derived read-only view; no stored state, no side effects,
+    // reuses the same fixed threshold as list()'s `notify` field.
     const out = [];
     for (const [sku, s] of stock.entries()) {
       const avail = s.onHand - s.reserved;
@@ -145,14 +161,6 @@ export function createInventory(parts = []) {
       }
     }
     return out;
-  }
-
-  function requisitions() {
-    return [...requisitionsMap.values()].map((r) => ({ ...r }));
-  }
-
-  function reservations() {
-    return [...reservationsMap.entries()].map(([ref, r]) => ({ ref, ...r }));
   }
 
   return {

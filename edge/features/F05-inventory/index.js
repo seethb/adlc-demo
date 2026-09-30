@@ -1,104 +1,109 @@
 // F05 · Spare-parts inventory tracking
-// Pure ES module, no I/O, no deps. See specs/features/F05-inventory/design.md.
+// Org standard: pure ES module, no I/O/network/child_process/eval, no OT writes (ADR-001, IEC 62443 read-only).
+// Telemetry/inputs treated as untrusted per IoT security standard: reject unknown skus/refs, non-finite/negative qty.
 
-function isPositiveInt(n) {
-  return Number.isFinite(n) && Number.isInteger(n) && n > 0;
+function isPositiveFiniteNumber(n) {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0;
 }
 
 export function createInventory(parts = []) {
-  const stock = new Map(); // sku -> { onHand, reserved, reorderPoint, reorderQty }
-  const reservationsMap = new Map(); // ref -> { sku, qty }
-  const requisitionsMap = new Map(); // id -> { sku, qty, status }
-  let reqCounter = 0;
+  const stock = new Map(); // sku -> { name, onHand, reserved, reorderPoint, reorderQty }
+  const reservations = new Map(); // ref -> { sku, qty }
+  const openRequisitions = new Map(); // sku -> requisition object
+  let reqSeq = 0;
+  const allRequisitions = []; // preserves insertion order, includes closed ones
 
   for (const p of parts) {
     stock.set(p.sku, {
-      onHand: p.onHand ?? 0,
+      name: p.name,
+      onHand: p.onHand,
       reserved: 0,
-      reorderPoint: p.reorderPoint ?? 0,
-      // AC-F05-3/4: fallback reorderQty; if reorderPoint is 0 (and no reorderQty given)
-      // maybeRequisition still floors the request qty at 1, so a qty=0 requisition
-      // can never be created even with this fallback.
-      reorderQty: p.reorderQty ?? Math.max(1, p.reorderPoint ?? 1),
+      reorderPoint: p.reorderPoint,
+      reorderQty: p.reorderQty,
+      leadTimeDays: p.leadTimeDays,
+      unitCost: p.unitCost,
     });
   }
 
   function assertKnownSku(sku) {
-    if (!stock.has(sku)) throw new Error('unknown sku: ' + sku);
+    if (!stock.has(sku)) throw new Error(`unknown sku: ${sku}`); // AC-F05-5
+    return stock.get(sku);
   }
 
-  function available(sku) {
-    assertKnownSku(sku);
+  function findReservation(ref) {
+    const r = reservations.get(ref);
+    if (!r) throw new Error(`unknown reservation ref: ${ref}`);
+    return r;
+  }
+
+  function availableQty(sku) {
     const s = stock.get(sku);
     return s.onHand - s.reserved;
   }
 
   function maybeRequisition(sku) {
     const s = stock.get(sku);
-    const avail = s.onHand - s.reserved;
-    if (avail <= s.reorderPoint) {
-      const hasOpen = [...requisitionsMap.values()].some(
-        (r) => r.sku === sku && r.status === 'open'
-      );
-      if (!hasOpen) {
-        const qty = Math.max(s.reorderPoint - avail, s.reorderQty, 1);
-        const id = 'REQ-' + ++reqCounter;
-        requisitionsMap.set(id, { id, sku, qty, status: 'open' });
-      }
+    if (availableQty(sku) <= s.reorderPoint && !openRequisitions.has(sku)) {
+      reqSeq += 1;
+      const req = { id: `REQ-${reqSeq}`, sku, qty: s.reorderQty, status: 'open' };
+      openRequisitions.set(sku, req);
+      allRequisitions.push(req);
     }
   }
 
   function reserve(sku, qty, ref) {
-    assertKnownSku(sku);
-    if (!isPositiveInt(qty)) {
-      throw new Error('invalid qty: ' + qty);
+    const s = assertKnownSku(sku);
+    if (!isPositiveFiniteNumber(qty)) throw new Error('qty must be a positive finite number');
+    if (typeof ref !== 'string' || ref.length === 0) throw new Error('ref must be a non-empty string');
+
+    const availableNow = s.onHand - s.reserved;
+    const grant = Math.max(0, Math.min(qty, availableNow));
+    s.reserved += grant;
+
+    if (grant > 0) {
+      const existing = reservations.get(ref);
+      if (existing && existing.sku === sku) {
+        existing.qty += grant;
+      } else {
+        reservations.set(ref, { sku, qty: grant });
+      }
     }
-    if (typeof ref !== 'string' || ref.length === 0) {
-      throw new Error('invalid ref: ' + ref);
-    }
-    // AC-F05-1: reservation ref must be a stable, unique identity. If the same
-    // ref is reused while still open, release the prior reservation's stock
-    // first to avoid leaking reserved quantity on the old sku.
-    if (reservationsMap.has(ref)) {
-      release(ref);
-    }
-    const s = stock.get(sku);
-    const avail = s.onHand - s.reserved;
-    const shortfall = Math.max(0, qty - avail);
-    const granted = qty - shortfall;
-    s.reserved += granted;
-    reservationsMap.set(ref, { sku, qty: granted });
-    maybeRequisition(sku);
-    return { ok: shortfall === 0, reserved: granted, shortfall };
+
+    maybeRequisition(sku); // AC-F05-3
+
+    const shortfall = Math.max(0, qty - grant);
+    return { ok: shortfall === 0, reserved: grant, shortfall };
   }
 
   function release(ref) {
-    const r = reservationsMap.get(ref);
-    if (!r) return;
-    const s = stock.get(r.sku);
-    if (s) s.reserved -= r.qty;
-    reservationsMap.delete(ref);
+    const r = findReservation(ref);
+    const s = assertKnownSku(r.sku);
+    s.reserved -= r.qty;
+    reservations.delete(ref);
   }
 
   function consume(ref) {
-    const r = reservationsMap.get(ref);
-    if (!r) return;
-    const s = stock.get(r.sku);
-    if (s) {
-      s.onHand -= r.qty;
-      s.reserved -= r.qty;
-    }
-    reservationsMap.delete(ref);
-    if (s) maybeRequisition(r.sku);
+    const r = findReservation(ref);
+    const s = assertKnownSku(r.sku);
+    s.onHand -= r.qty;
+    s.reserved -= r.qty;
+    reservations.delete(ref);
+    maybeRequisition(r.sku); // AC-F05-3
   }
 
   function receive(reqId) {
-    const req = requisitionsMap.get(reqId);
-    if (!req || req.status !== 'open') return false;
-    const s = stock.get(req.sku);
-    if (s) s.onHand += req.qty;
-    req.status = 'received';
+    const req = allRequisitions.find(x => x.id === reqId && x.status === 'open');
+    if (!req) return false;
+    const s = assertKnownSku(req.sku);
+    s.onHand += req.qty;
+    req.status = 'received'; // AC-F05-4
+    openRequisitions.delete(req.sku);
     return true;
+  }
+
+  function available(sku) {
+    assertKnownSku(sku);
+    return availableQty(sku);
   }
 
   function list() {
@@ -111,15 +116,17 @@ export function createInventory(parts = []) {
   }
 
   function lowStock() {
-    return list().filter((i) => i.available <= stock.get(i.sku).reorderPoint);
+    return [...stock.entries()]
+      .filter(([sku, s]) => (s.onHand - s.reserved) <= s.reorderPoint)
+      .map(([sku, s]) => ({ sku, available: s.onHand - s.reserved, reorderPoint: s.reorderPoint }));
   }
 
   function requisitions() {
-    return [...requisitionsMap.values()].map((r) => ({ ...r }));
+    return allRequisitions.map(r => ({ ...r }));
   }
 
-  function reservations() {
-    return [...reservationsMap.entries()].map(([ref, r]) => ({ ref, ...r }));
+  function reservationsList() {
+    return [...reservations.entries()].map(([ref, r]) => ({ ref, sku: r.sku, qty: r.qty }));
   }
 
   return {
@@ -131,6 +138,6 @@ export function createInventory(parts = []) {
     list,
     lowStock,
     requisitions,
-    reservations,
+    reservations: reservationsList,
   };
 }

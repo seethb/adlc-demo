@@ -1,31 +1,27 @@
 # F05 · Spare-parts inventory tracking — Plan
 
 ## Summary
-Track per-SKU on-hand, reserved and available inventory as work orders reserve, release, and consume parts, with automatic reorder requisitions and receiving, so stockouts are visible before they stall work orders.
+Implements per-SKU inventory tracking with reservations, release/consume, automatic requisitions at reorder point, and receiving. Module: `edge/features/F05-inventory/index.js`, exporting `createInventory`.
 
 ## User stories
-- As a maintenance planner, I want to reserve parts for a WO without ever going negative on availability, so that shortfalls are surfaced early. (AC-F05-1)
-- As a technician, I want to release or consume a reservation, so that stock reflects actual usage. (AC-F05-2)
-- As a purchasing agent, I want exactly one open requisition per SKU when stock hits reorder point, so that I don't double-order. (AC-F05-3)
-- As a purchasing agent, I want receiving a requisition to restock and close it, so that inventory stays accurate. (AC-F05-4)
-- As a system integrator, I want unknown SKUs to throw, so that bad data is caught early. (AC-F05-5)
+- As a maintenance planner, I want to reserve parts for a work order so that stock is held without going negative. (AC-F05-1)
+- As a technician, I want to release or consume a reservation so that stock accurately reflects what was used or returned. (AC-F05-2)
+- As a planner, I want a single open requisition per SKU when stock hits the reorder point so that I don't double-order. (AC-F05-3)
+- As a store clerk, I want receiving a requisition to restock and close it so that inventory stays current. (AC-F05-4)
+- As a system integrator, I want unknown SKUs to throw errors so that bad data is caught early. (AC-F05-5)
 
-## Acceptance criteria traceability
-| AC id | Description | Covered by |
-|---|---|---|
-| AC-F05-1 | Reservations never drive availability negative; shortfall reported | `reserve()` |
-| AC-F05-2 | `release` returns stock; `consume` reduces on-hand, clears reservation | `release()`, `consume()` |
-| AC-F05-3 | Exactly one open requisition per SKU at/below reorder point | `reserve()`/`consume()` triggering requisition logic |
-| AC-F05-4 | Receiving a requisition restocks by quantity and closes it | `receive()` |
-| AC-F05-5 | Unknown SKUs throw | all sku-taking methods |
+## AC traceability
+| AC id | Covered by |
+|---|---|
+| AC-F05-1 | `reserve()` returns `{ ok, reserved, shortfall }`; never negative availability |
+| AC-F05-2 | `release(ref)` and `consume(ref)` logic |
+| AC-F05-3 | requisition dedup logic on `reserve`/`consume` when available ≤ reorder point |
+| AC-F05-4 | `receive(reqId)` restocks and closes requisition |
+| AC-F05-5 | SKU validation throws on all entry points |
 
 ## Contract
-Export: `createInventory(parts?) → { reserve(sku, qty, ref), release(ref), consume(ref), receive(reqId), available(sku), list(), lowStock(), requisitions(), reservations() }`.
-- `reserve` returns `{ ok, reserved, shortfall }`; never allows available < 0.
-- `release(ref)` returns reserved qty to available.
-- `consume(ref)` reduces on-hand and clears the reservation for `ref`.
-- `receive(reqId)` restocks by the requisition's quantity and closes it.
-- Any call referencing an unknown SKU throws.
+Exports: `createInventory`.
+`createInventory(parts?) → { reserve(sku, qty, ref), release(ref), consume(ref), receive(reqId), available(sku), list(), lowStock(), requisitions(), reservations() }`.
 
 ## Dependencies
 None.
@@ -34,13 +30,10 @@ None.
 Multi-site stock; valuation.
 
 ## Risks
-Long-lead parts (impellers, anti-surge valve trim) need visibility before the WO is raised; current scope only reacts at reorder point, not lead-time-adjusted.
+Long-lead parts (impellers, anti-surge valve trim) need visibility before the WO is raised; mitigated by `lowStock()`/`requisitions()` exposing open reorder state early.
 
 ## Telemetry & evals
-Behavioural eval: replay a 6-fault scenario; assert availability never goes negative across all SKUs.
+Behavioural eval: 6-fault scenario replay must never show negative availability. Telemetry and logs reference only SKU/asset ids and pseudonymous team ids, never operator or technician names, per org privacy standard. Timestamps ISO-8601 UTC; numeric values rounded to 3 decimals.
 
 ## Definition of done
-- All AC-F05-1..5 covered by passing tests.
-- `createInventory` exported from `edge/features/F05-inventory/index.js` matching contract.
-- 6-fault replay eval passes with no negative availability.
-- Reference impl (`edge/reference/inventory.js`) parity confirmed.
+All AC-F05-1..5 pass in `specs/features/F05-inventory.acceptance.test.js`; `createInventory` exported from `edge/features/F05-inventory/index.js`; no PII in telemetry/logs; design doc cross-referenced; reviewed by owner (rigel).

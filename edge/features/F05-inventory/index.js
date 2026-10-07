@@ -1,6 +1,5 @@
 // F05 · Spare-parts inventory tracking
 // Pure ES module, no I/O, no deps. See specs/features/F05-inventory/design.md.
-// CR-002: adds `notification` field (available < 5) to list()/lowStock() items.
 // CR-001: long-lead parts (leadTimeDays >= 14) are critical spares — they reorder
 // one unit early (available <= reorderPoint + 1) and requisitions carry
 // priority/etaDays/reason. See specs/changes/CR-001-f05-expedite-long-lead/design.md.
@@ -129,7 +128,6 @@ export function createInventory(parts = []) {
 
   // AC-CR001-4: list() surfaces part-master fields for the edge UI, with `low`
   // computed from the same threshold used to trigger requisitions (AC-CR001-1).
-  // AC-CR002-1: `notification` remains (available < 5) — kept for regression.
   function list() {
     return [...stock.entries()].map(([sku, s]) => {
       const avail = s.onHand - s.reserved;
@@ -142,7 +140,6 @@ export function createInventory(parts = []) {
         reorderPoint: s.reorderPoint,
         leadTimeDays: s.leadTimeDays,
         low: avail <= threshold(s),
-        notification: avail < 5,
       };
     });
   }

@@ -1,39 +1,37 @@
-# Impact Analysis — BUG-001 · Natural-language asset clarification (F06)
+# BUG-001 Impact Analysis · F06 Natural-language asset queries
 
 ## Summary
-`condition` intent queries currently answer from a snapshot without guaranteeing the *latest* fleet status per resolved asset. BUG-001 requires that status-related queries surface the current live/not-live status per asset (e.g. "Asset 1- Live", "Asset 2- Not Live"), without altering planner or health-score behavior.
+Fixes `condition`-intent status queries so they surface each resolved asset's latest status (e.g. "Asset 1- Live", "Asset 2- Not Live") instead of only raw metrics, satisfying AC-BUG001-1 without altering existing F06 behavior (AC-BUG001-2).
 
 ## Motivation
-Users asking status questions ("is MTR-101 live?") got stale or ambiguous answers. Fix must guarantee latest-state resolution per asset while leaving all existing F06 contract behavior intact.
+Users asking status-style questions ("is MTR-101 live?") got health/metric output but no explicit latest live/not-live status line, forcing manual inference. Reliability engineers need an at-a-glance status per asset.
 
 ## Impact
 **Changes** in `edge/features/F06-nl-asset-query/index.js`:
-- After `parseQuery` resolves `resolvedAssets`, the response-assembly path (consumer of `parseQuery`/`healthScore` for `condition`/status queries) must fetch each asset's latest live-state and format per-asset status lines ("Asset <id> - Live" / "Asset <id> - Not Live").
-- No new intent added; this augments the existing `condition` intent's downstream formatting, not the planner's intent-matching order.
+- For `condition`/status-style queries, after `resolvedAssets` is computed, append a per-asset status label (`"<assetLabel>- Live"` / `"<assetLabel>- Not Live"`) derived from existing liveness/telemetry-freshness state (no new data source).
+- Status derivation is additive formatting logic layered on current output; does not alter `parseQuery`'s returned shape (`intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets`).
 
-**Stays unchanged**:
-- `parseQuery` signature/output shape `{ intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets }`.
-- `healthScore(assetType, metrics)` → 0–100 logic and thresholds (100 nominal, <50 severe deviation).
-- All planner rules: intent precedence order, asset id/type resolution (incl. "SHF 301", centrifugal disambiguation), metric keyword table, window parsing/defaults.
+**Stays unchanged:**
+- `parseQuery(text)` signature/fields and intent-matching order (inventory→work_orders→car→anomalies→trend→ranking→condition).
+- Asset id/type resolution, metric keyword table, window parsing defaults (300s).
+- `healthScore(assetType, metrics)` contract and 0–100 scale/thresholds.
+- Golden-set file `F06-nl-asset-query.golden.json` as normative reference — no new golden cases removed or reordered.
 
 ## Acceptance-criteria traceability
-
-| AC | Requirement | Verification |
+| AC id | Requirement | Verification |
 |---|---|---|
-| AC-BUG001-1 | Latest status per asset (e.g. "Asset 1- Live", "Asset 2- Not Live") | New unit test on status formatting path using live-state fixtures |
-| AC-BUG001-2 | Regression: AC-F06-1..4 unchanged | Re-run F06 golden-set + acceptance suite, 100% pass, no diffs |
-| AC-F06-1 | Intent accuracy 100% on golden set | Unchanged; golden-set suite re-run |
-| AC-F06-2 | Asset id/type resolution ("SHF 301", motor, pump, shaft, compressor, gearbox) | Unchanged; suite re-run |
-| AC-F06-3 | Metrics + time window extraction ("last 10 minutes") | Unchanged; suite re-run |
-| AC-F06-4 | Health 100 nominal, <50 severe deviation | Unchanged; `healthScore` untouched, suite re-run |
+| AC-BUG001-1 | Latest status shown (e.g. Asset 1- Live / Asset 2- Not Live) | New unit tests on status-intent queries asserting the `"<id>- Live/Not Live"` string per resolved asset |
+| AC-BUG001-2 | AC-F06-1..4 unchanged | Full existing F06 suite + golden set rerun, 0 regressions |
+| AC-F06-1 | 100% intent accuracy on golden set | Golden-set regression run |
+| AC-F06-2 | Asset ids/types resolved incl. "SHF 301" | Existing resolution unit tests |
+| AC-F06-3 | Metrics & windows extracted ("last 10 minutes") | Existing extraction unit tests |
+| AC-F06-4 | Health 100 nominal, <50 severe deviation | Existing `healthScore` unit tests |
 
 ## Risks & rollback
-Risk: touching shared formatting code could regress non-status intents (trend, ranking, etc.) if status logic isn't scoped tightly to `condition`/status paths. Mitigation: gate new logic behind explicit status-detection, keep other intents' output paths untouched. Rollback: revert index.js to pre-BUG-001 commit; no schema/data migration involved.
+Risk: status derivation misclassifies an asset as Live/Not Live if liveness source is stale — mitigate by reusing already-validated telemetry-freshness check, no new polling path. Rollback: Helm redeploy of previous F06 build; gateway restarts automatically on rollback, reverting to pre-BUG-001 behavior.
 
 ## Rollout
-Deploy to `edge-staging` via Helm after human approval, per BUG-001 rollout note; edge gateway restarts on the new build to pick up updated index.js.
+Deploy to `edge-staging` via Helm after human approval; edge gateway restarts on the new build (per BUG-001 CR rollout).
 
 ## Definition of done
-- AC-BUG001-1 verified with new tests.
-- Full F06 golden-set + acceptance suite (AC-F06-1..4) green, unchanged.
-- Deployed to edge-staging, gateway restarted, smoke-tested with sample status queries.
+AC-BUG001-1 verified via new tests; AC-BUG001-2 verified via zero-regression full F06 + golden-set run; PR merged, deployed to edge-staging, gateway restarted, Meko memory updated.

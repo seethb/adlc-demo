@@ -1,7 +1,7 @@
 // F06 — Natural-language asset queries (NLQ)
 // Pure planner + health scorer. No I/O, no network, no eval (org standard ADR-001).
 // Grounded fleet metadata is imported from the reference fleet definitions only.
-// BUG-001: adds status-clarification formatting via answerFromSnapshot/isLive.
+// BUG-001: adds status-clarification formatting via answerFromSnapshot/statusLabel.
 // parseQuery/healthScore contracts are unchanged (AC-BUG001-2).
 import { FLEET, ASSET_TYPES } from '../../reference/fleet.js';
 
@@ -28,6 +28,11 @@ function resolveIntent(normText) {
   }
   return 'condition';
 }
+
+// ---- BUG-001: status-style query detection -------------------------------
+// AC-BUG001-1: words indicating the user wants the latest live/not-live
+// status rather than a metric dump. Checked against the normalized text.
+const STATUS_WORDS = /\bstatus\b|\blive\b|\bup\b|\bdown\b|\brunning\b/;
 
 // ---- asset ids (AC-F06-2) ----------------------------------------------
 // Matches canonical dashed ids (MTR-101) and spaced forms (SHF 301),
@@ -58,7 +63,7 @@ function resolveAssetTypes(normText) {
 
   if (hasCompressor) types.push('centrifugal_compressor');
   // "pump" or bare "centrifugal" (without compressor) resolves to centrifugal_pump;
-  // "centrifugal" alone does not add pump if compressor is already present.
+  // "centrifugal" alone does not also add pump if compressor is already present.
   if (hasPumpWord || (hasCentrifugal && !hasCompressor)) {
     if (!types.includes('centrifugal_pump')) types.push('centrifugal_pump');
   }
@@ -121,6 +126,9 @@ function resolveAssets(assetIds, assetTypes, fleet) {
 }
 
 // ---- exported: parseQuery (AC-F06-1..3, AC-BUG001-2: unchanged shape) ----
+// BUG-001: appends an additive `_statusQuery` boolean field (AC-BUG001-1).
+// It is not part of the documented contract tuple; callers destructuring
+// the five original fields are unaffected (AC-BUG001-2).
 export function parseQuery(text, fleet = FLEET) {
   const normText = normalize(text);
   const intent = resolveIntent(normText);
@@ -129,8 +137,9 @@ export function parseQuery(text, fleet = FLEET) {
   const metrics = resolveMetrics(normText);
   const windowSec = resolveWindow(normText);
   const resolvedAssets = resolveAssets(assetIds, assetTypes, fleet);
+  const _statusQuery = STATUS_WORDS.test(normText);
 
-  return { intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets };
+  return { intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets, _statusQuery };
 }
 
 // ---- exported: healthScore (AC-F06-4, AC-BUG001-2: unchanged logic) ------
@@ -164,47 +173,55 @@ export function healthScore(assetType, metrics) {
 }
 
 // ---- BUG-001: status clarification helpers --------------------------------
-// isLive(asset) — internal, not exported. Reads asset.status defensively;
-// falls back to `!asset.openAnomaly` when status is absent, and defaults to
-// "Not Live" for missing/non-boolean signals (reject untrusted telemetry,
-// IoT security standard). Read-only: never mutates asset/snapshot.
-function isLive(asset) {
-  if (!asset || typeof asset !== 'object') return false;
-  if (typeof asset.status === 'boolean') return asset.status;
+// statusLabel(asset) — internal, not exported. "Live" if the asset has no
+// open anomaly and its last-seen freshness is within threshold; otherwise
+// "Not Live". Reuses existing snapshot fields only (status/openAnomaly/
+// lastSeenSec) — read-only towards OT, no new telemetry ingestion path.
+// Defaults to "Not Live" for missing/untrusted signals (IoT security
+// standard: reject-by-default on untrusted/absent data).
+const FRESHNESS_THRESHOLD_SEC = 60;
+
+function statusLabel(asset) {
+  if (!asset || typeof asset !== 'object') return 'Not Live';
+
   if (typeof asset.status === 'string') {
     const s = asset.status.toLowerCase();
-    if (s === 'live' || s === 'up' || s === 'online') return true;
-    if (s === 'not live' || s === 'down' || s === 'offline') return false;
+    if (s === 'live' || s === 'up' || s === 'online') return 'Live';
+    if (s === 'not live' || s === 'down' || s === 'offline') return 'Not Live';
   }
-  if ('openAnomaly' in asset) return !asset.openAnomaly;
-  return false;
+  if (typeof asset.status === 'boolean') return asset.status ? 'Live' : 'Not Live';
+
+  const hasOpenAnomaly = 'openAnomaly' in asset ? Boolean(asset.openAnomaly) : false;
+  const fresh = typeof asset.lastSeenSec === 'number'
+    ? asset.lastSeenSec <= FRESHNESS_THRESHOLD_SEC
+    : true; // no freshness signal available: don't penalize on that axis alone
+
+  return (!hasOpenAnomaly && fresh) ? 'Live' : 'Not Live';
 }
 
 // ---- exported: answerFromSnapshot (AC-BUG001-1) ---------------------------
 // (plan, snapshot) -> string. Additive branch only: fires for `condition`
-// intent queries with no explicit metrics requested (generic "how is X" /
-// "is X live" phrasing), per the design delta. Metric-specific `condition`
-// queries and all other intents are untouched by callers of this helper —
-// parseQuery/healthScore themselves are not modified (AC-BUG001-2).
+// intent queries whose text was detected as status-style via
+// plan._statusQuery (generic "is X live" / "X status" phrasing), per the
+// design delta. All other condition queries and other intents fall through
+// to the pre-existing metric-summary behaviour, unchanged (AC-BUG001-2).
+// parseQuery/healthScore themselves are not modified beyond the additive
+// `_statusQuery` field.
 export function answerFromSnapshot(plan, snapshot) {
   const assets = Array.isArray(snapshot?.assets) ? snapshot.assets : [];
+  const resolved = new Set(plan?.resolvedAssets ?? []);
+  const inScope = assets.filter((a) => resolved.size === 0 || resolved.has(a.id));
 
-  if (plan?.intent === 'condition' && Array.isArray(plan.metrics) && plan.metrics.length === 0) {
-    const resolved = new Set(plan.resolvedAssets ?? []);
-    const lines = assets
-      .filter((a) => resolved.size === 0 || resolved.has(a.id))
-      .map((a) => `Asset ${a.id} - ${isLive(a) ? 'Live' : 'Not Live'}`);
-    return lines.join(' ');
+  if (plan?.intent === 'condition' && plan?._statusQuery) {
+    return inScope.map((a) => `${a.id}- ${statusLabel(a)}`).join(' ');
   }
 
   // Fallback for non-status condition queries / other intents: preserve
   // prior generic behaviour shape (health-score based summary per asset).
-  const resolved = new Set(plan?.resolvedAssets ?? []);
-  const lines = assets
-    .filter((a) => resolved.size === 0 || resolved.has(a.id))
+  return inScope
     .map((a) => {
       const score = healthScore(a.type, a.metrics ?? {});
       return `Asset ${a.id} health ${score}/100`;
-    });
-  return lines.join(' ');
+    })
+    .join(' ');
 }

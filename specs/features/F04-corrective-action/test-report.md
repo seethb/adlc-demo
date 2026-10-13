@@ -1,6 +1,6 @@
 # F04 test report
 
-Run f04-mugsc8b3 · 2026-09-25T09:57:43.683Z
+Run f04-mv6oq7ar · 13 Oct 2026, 18:28:46 IST
 
 | | Acceptance criterion | Result |
 |---|---|---|

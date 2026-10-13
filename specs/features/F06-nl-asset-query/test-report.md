@@ -1,6 +1,6 @@
 # F06 test report
 
-Run f06-mv6e0rx0 · 13 Oct 2026, 13:30:43 IST
+Run f06-mv6oq9ce · 13 Oct 2026, 18:29:44 IST
 
 | | Acceptance criterion | Result |
 |---|---|---|

@@ -1,47 +1,48 @@
-# F06 Natural-language asset queries — Plan
+# F06 · Natural-language asset queries — Plan
 
 ## Summary
-Deterministic NLQ planner that parses free-text questions into intent, resolved assets/types, metrics, and time window, plus a per-asset health score. Grounds Claude's Studio answers in live fleet state (F02), work orders (F03), and inventory (F05) data without duplicating their logic.
+A deterministic query planner that parses operator questions into intent, asset ids/types, metrics, and time windows, then grounds Studio's Claude-powered answers in the resulting fleet-state slice, plus a 0–100 health score per asset.
 
 ## User stories
-- As a reliability engineer, I want the system to correctly classify my question's intent so I get relevant answers. (AC-F06-1)
-- As an engineer, I want to refer to assets by id (e.g. "SHF 301") or type (e.g. "centrifugal pump") and have them resolved correctly. (AC-F06-2)
-- As a user, I want to specify metrics and time windows in plain English ("last 10 minutes") and have them extracted precisely. (AC-F06-3)
-- As a user, I want a single health number per asset so I can quickly tell nominal from severe deviation. (AC-F06-4)
+- As a reliability engineer, I want to ask "how is motor MTR-101 performing?" and get an accurate intent so the system queries the right data. (AC-F06-1)
+- As a developer, I want asset ids like "SHF 301" and asset types like "centrifugal pump" resolved correctly so results scope to the right equipment. (AC-F06-2)
+- As a user, I want metrics and time windows like "last 10 minutes" extracted from my question so the query reflects what I actually asked. (AC-F06-3)
+- As an operator, I want a 0–100 health score per asset so I can tell nominal from severely deviating equipment at a glance. (AC-F06-4)
 
 ## Acceptance criteria traceability
-
-| AC id | Covered by |
+| AC | Covered by |
 |---|---|
-| AC-F06-1 | Intent rule cascade (inventory→work_orders→car→anomalies→trend→ranking→condition) validated against golden set |
-| AC-F06-2 | Asset id regex (incl. spaced "SHF 301") + asset-type keyword table, with centrifugal disambiguation |
-| AC-F06-3 | Metric keyword table + window regex ("last N s/m/h") with 300s default |
-| AC-F06-4 | healthScore(assetType, metrics) returns 100 at nominal, <50 under severe deviation |
+| AC-F06-1 | `parseQuery` intent rule ladder (inventory→work_orders→car→anomalies→trend→ranking→condition), validated against golden set |
+| AC-F06-2 | `parseQuery` asset id/type resolution incl. "SHF 301" spaced form and centrifugal disambiguation |
+| AC-F06-3 | `parseQuery` metric keyword table and window regex ("last N s/m/h") default 300s |
+| AC-F06-4 | `healthScore(assetType, metrics)` scoring: 100 nominal, <50 severe deviation |
 
 ## Contract
 - `parseQuery(text)` → `{ intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets }`
-- `healthScore(assetType, metrics)` → 0–100
-
-Intents: `condition`, `trend`, `anomalies`, `ranking`, `inventory`, `work_orders`, `car`.
+- `healthScore(assetType, metrics)` → number 0–100
+- Intents: `condition`, `trend`, `anomalies`, `ranking`, `inventory`, `work_orders`, `car`
 
 ## Dependencies
-- **F02** — supplies live metrics/anomaly state used to resolve `resolvedAssets` and compute `healthScore` deviations; F06 must not reimplement zone/classification logic.
-- **F03** — supplies work-order data for the `work_orders` intent; F06 reads WO shape, never recomputes it.
-- **F05** — supplies inventory data for the `inventory` intent; F06 reads availability/lowStock, never reimplements reservation logic.
+- F02 (createDetector, vibrationZone, classify) — supplies live metrics/anomaly state for `condition`/`anomalies`/`trend` answers; not reimplemented here.
+- F03 (createWorkOrderService) — supplies data for `work_orders` intent.
+- F05 (createInventory) — supplies data for `inventory` intent.
+
+F06 must not duplicate internal logic of F02/F03/F05; it only consumes their exported contracts.
 
 ## Non-goals
-- No free-form SQL generation.
-- No write actions (e.g. creating WOs, reserving parts) from chat.
+- Free-form SQL generation.
+- Write actions from chat (no mutating inventory/work orders via NLQ).
 
 ## Risks
-"Centrifugal" is ambiguous between pump and compressor. Mitigation: if "compressor" present, resolve to `centrifugal_compressor` only; bare "centrifugal" or "pump" resolves to `centrifugal_pump`.
+"Centrifugal" alone is ambiguous between pump and compressor; planner resolves bare "centrifugal" to `centrifugal_pump` unless "compressor" is present, per rules. Golden set is normative for intent disambiguation edge cases.
 
 ## Telemetry & evals
-- Behavioural eval: golden-set intent accuracy must equal 1.0 (AC-F06-1), run on every change to `edge/reference/nlq.js` and `edge/features/F06-nl-asset-query/index.js`.
-- Log parsed query shape (intent, resolvedAssets count, windowSec) for debugging, never operator/technician names (asset ids only, per privacy standard).
+Behavioural eval: golden-set intent accuracy must equal 1.0 (AC-F06-1). Track parse failures (unresolved assets/metrics) as eval regressions.
 
 ## Definition of done
-- `parseQuery` and `healthScore` implemented per contract in `edge/features/F06-nl-asset-query/index.js`.
-- All AC-F06-1..4 pass against `F06-nl-asset-query.golden.json` and acceptance suite.
-- No duplication of F02/F03/F05 internal logic; only their documented contracts are called.
-- Design doc's AC→design mapping and reused-team-decisions sections stay consistent with this plan.
+- `edge/features/F06-nl-asset-query/index.js` exports `parseQuery`, `healthScore` matching contract shapes exactly.
+- All golden-set cases pass with 100% intent accuracy (AC-F06-1).
+- Asset id/type resolution, including "SHF 301" and the five listed types, verified by tests (AC-F06-2).
+- Metric and window extraction verified for representative phrasings, incl. "last 10 minutes" (AC-F06-3).
+- `healthScore` returns 100 at nominal metrics and <50 under severe deviation across supported asset types (AC-F06-4).
+- No operator/technician names surfaced in NLQ answers — asset ids only.

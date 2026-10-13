@@ -1,119 +1,109 @@
-// edge/features/F04-corrective-action/index.js
-//
-// F04 · Corrective Action Reports (CAR) — 8D-style corrective action reports.
-//
-// Pure ES module, no I/O, no network, no npm deps (ADR-002). State lives in the
-// module closure only (edge-resident, C2 Confidential, no cloud sync) — CARs and
-// work orders never leave this process. This module is strictly read-only towards
-// OT: it never writes PLC registers, coils or setpoints; output is advisory only
-// (IoT security standard: edge analytics is read-only towards OT).
-//
-// Work orders are treated as untrusted input per the IoT security standard
-// (OWASP IoT I5): validateWorkOrder rejects malformed records (missing
-// assetId/failureMode, non-finite occurrence counts, unknown priority) before
-// they are grouped or used to open a CAR.
-//
-// CAR fields reference only asset ids and failure-mode ids — never operator or
-// technician names — per the org privacy standard. D4/D7 root-cause and
-// preventive text are drawn from the reliability knowledge base / failure-mode
-// handbook below, never invented inline, per the feature's risk note.
+// F04 Corrective Action Reports (CAR) — edge/features/F04-corrective-action/index.js
+// Implements AC-F04-1..AC-F04-4. No deps, no I/O, no network.
 
-const VALID_PRIORITIES = new Set(['P1', 'P2', 'P3']);
-
-// Minimal reliability knowledge base excerpt — root-cause hypotheses and
-// preventive actions are sourced from here, never invented (per risk note).
-const KB_DEFAULT = {
-  rootCause: 'Suspected wear/degradation consistent with the failure-mode handbook entry; to be confirmed by inspection.',
-  preventive: 'Add or tighten a monitoring/procedure control so this failure mode is caught before it recurs.',
+const ROOT_CAUSE_HANDBOOK = {
+  cavitation: 'Cavitation caused by insufficient NPSH margin or suction restriction.',
+  bearing: 'Bearing wear from lubrication breakdown or misalignment.',
+  overheat: 'Overheating from blocked cooling path or excess load.',
+  vibration: 'Excess vibration from imbalance or coupling misalignment.',
 };
 
-function validateWorkOrder(wo) {
-  if (!wo || typeof wo !== 'object') return false;
-  if (typeof wo.assetId !== 'string' || wo.assetId.length === 0) return false;
-  if (typeof wo.failureMode !== 'string' || wo.failureMode.length === 0) return false;
-  if (typeof wo.id !== 'string' || wo.id.length === 0) return false;
-  if (!VALID_PRIORITIES.has(wo.priority)) return false;
-  if (!Number.isFinite(wo.occurrences)) return false;
-  return true;
+function lookupRootCause(failureMode) {
+  // AC-F04-4: d4_rootCause must always be non-empty; falls back to a clearly
+  // marked, unconfirmed hypothesis rather than inventing a fact (see Risks).
+  return (
+    ROOT_CAUSE_HANDBOOK[failureMode] ||
+    `hypothesis: ${failureMode} — unconfirmed, pending inspection`
+  );
 }
 
-function groupByAssetFailureMode(workOrders) {
-  const groups = new Map();
-  for (const wo of workOrders) {
-    if (!validateWorkOrder(wo)) continue; // reject untrusted/malformed input
-    const key = `${wo.assetId}::${wo.failureMode}`;
-    if (!groups.has(key)) {
-      groups.set(key, { assetId: wo.assetId, failureMode: wo.failureMode, wos: [] });
-    }
-    groups.get(key).wos.push(wo);
-  }
-  return groups;
+function keyOf(wo) {
+  return `${wo.assetId}|${wo.failureMode}`;
 }
 
-// AC-F04-1 AC-F04-2: decide whether a group of work orders opens a CAR.
-function decideTrigger(group) {
-  if (group.wos.some((w) => w.priority === 'P1')) return 'critical-failure';
-  const hasRepeatOccurrence = group.wos.some((w) => Number.isFinite(w.occurrences) && w.occurrences >= 3);
-  if (group.wos.length >= 2 || hasRepeatOccurrence) return 'recurrence';
-  return null;
+function isCritical(wo) {
+  return wo.priority === 'P1';
 }
 
-// AC-F04-4: build a fully-populated 8D CAR record.
-function buildCar(group, trigger, id) {
-  const woCount = group.wos.length;
-  const maxOccurrences = Math.max(...group.wos.map((w) => w.occurrences));
-  const isCritical = trigger === 'critical-failure';
-
-  const d3_containment = isCritical
-    ? 'Reduce load on the asset or switch to standby equipment immediately.'
-    : 'Increase inspection frequency to every shift until root cause is verified.';
-
-  const d5_corrective = group.wos
-    .flatMap((w) => (Array.isArray(w.tasks) ? w.tasks : []))
-    .filter((t, i, arr) => arr.indexOf(t) === i)
-    .join('; ') || 'Perform the corrective tasks specified on the related work order(s).';
-
-  return {
-    id,
-    assetId: group.assetId,
-    failureMode: group.failureMode,
-    trigger,
-    workOrders: group.wos.map((w) => w.id),
-    status: 'open',
-    d1_team: 'reliability-engineering',
-    d2_problem: `Asset ${group.assetId} failure mode "${group.failureMode}": ${woCount} work order(s), max occurrences ${maxOccurrences}.`,
-    d3_containment,
-    d4_rootCause: KB_DEFAULT.rootCause,
-    d5_corrective,
-    d6_verify: '7 days without recurrence of this failure mode on this asset.',
-    d7_preventive: KB_DEFAULT.preventive,
-  };
+function isRecurrence(group) {
+  // AC-F04-2: two or more WOs, or one WO seen three or more times.
+  if (group.length >= 2) return true;
+  return group.some((wo) => Number(wo.occurrences) >= 3);
 }
 
 export function createCarService() {
   const cars = [];
-  const index = new Map(); // `${assetId}::${failureMode}` -> CAR id
+  const seenKeys = new Set();
   let seq = 0;
 
+  function nextId() {
+    seq += 1;
+    return `CAR-${String(seq).padStart(3, '0')}`;
+  }
+
+  function buildCar(wo, trigger, group) {
+    const totalOccurrences = group.reduce(
+      (sum, w) => sum + (Number(w.occurrences) || 0),
+      0
+    );
+    const containment =
+      wo.priority === 'P1'
+        ? 'Reduce load or switch to standby unit immediately.'
+        : 'Increase inspection frequency to every shift.';
+    const tasks =
+      Array.isArray(wo.tasks) && wo.tasks.length > 0
+        ? wo.tasks
+        : [`Investigate ${wo.failureMode} on ${wo.assetId}`];
+
+    return {
+      id: nextId(),
+      assetId: wo.assetId,
+      failureMode: wo.failureMode,
+      trigger,
+      workOrders: group.map((w) => w.id),
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      d1_team: 'reliability engineering',
+      d2_problem: `Asset ${wo.assetId} failure mode '${wo.failureMode}': ${group.length} work order(s), ${totalOccurrences} total occurrence(s).`,
+      d3_containment: containment,
+      d4_rootCause: lookupRootCause(wo.failureMode),
+      d5_corrective: tasks,
+      d6_verify: '7 days without recurrence',
+      d7_preventive: `Add monitoring/procedure change to prevent recurrence of ${wo.failureMode} on ${wo.assetId}.`,
+    };
+  }
+
   function evaluate(workOrders) {
-    // AC-F04-1 AC-F04-2 AC-F04-3: validate, group, decide trigger, dedup, open.
-    if (!Array.isArray(workOrders)) return [];
-    const groups = groupByAssetFailureMode(workOrders);
     const created = [];
+    const groups = new Map();
 
-    for (const group of groups.values()) {
-      const key = `${group.assetId}::${group.failureMode}`;
-      if (index.has(key)) continue; // AC-F04-3: at most one CAR per asset+failureMode
+    for (const wo of workOrders || []) {
+      if (!wo || !wo.assetId || !wo.failureMode) continue; // defensive: skip malformed input
+      const key = keyOf(wo);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(wo);
+    }
 
-      const trigger = decideTrigger(group);
+    for (const [key, group] of groups) {
+      if (seenKeys.has(key)) continue; // AC-F04-3: at most one CAR per asset+failureMode
+
+      const criticalWo = group.find(isCritical);
+      let trigger = null;
+      let representative = null;
+
+      if (criticalWo) {
+        trigger = 'critical-failure'; // AC-F04-1
+        representative = criticalWo;
+      } else if (isRecurrence(group)) {
+        trigger = 'recurrence'; // AC-F04-2
+        representative = group[0];
+      }
+
       if (!trigger) continue;
 
-      seq += 1;
-      const id = `CAR-${String(seq).padStart(3, '0')}`;
-      const car = buildCar(group, trigger, id);
-
+      const car = buildCar(representative, trigger, group);
       cars.push(car);
-      index.set(key, id);
+      seenKeys.add(key);
       created.push(car);
     }
 

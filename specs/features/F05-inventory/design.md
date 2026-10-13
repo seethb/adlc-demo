@@ -1,57 +1,54 @@
 # F05 · Spare-parts inventory tracking — Design
 
-## Module structure
-`edge/features/F05-inventory/index.js`, pure ES module, no third-party deps (per org standard).
+## Module structure (`edge/features/F05-inventory/index.js`)
 
-Internal state, held in closure over `parts` seed:
-- `stock: Map<sku, { onHand, reserved, reorderPoint }>`
-- `reservationsMap: Map<ref, { sku, qty }>`
-- `requisitionsMap: Map<reqId, { sku, qty, open: true }>`
-- `reqCounter` for id generation.
+**Internal state** (closure, not exported):
+- `catalog: Map<sku, { onHand, reserved, reorderPoint, reorderQty }>` seeded from `parts` arg.
+- `reservations: Map<ref, { sku, qty }>` — open reservations keyed by WO reference.
+- `requisitions: Map<reqId, { sku, qty, status: 'open'|'closed' }>` plus `openReqBySku: Map<sku, reqId>` to enforce one open requisition per SKU.
+- `nextReqId`: monotonically incrementing counter.
 
-Functions:
-- `assertKnownSku(sku)` — throws `Error('unknown sku: ' + sku)` if not in `stock`.
-- `available(sku)` — `onHand - reserved`.
-- `maybeRequisition(sku)` — internal helper called after `reserve`/`consume`; if `available(sku) <= reorderPoint` and no open requisition exists for that sku, creates one (qty = reorderPoint - available, min 1).
-- `reserve(sku, qty, ref)` — validates sku, computes shortfall = `max(0, qty - available(sku))`; reserves `qty - shortfall`; updates `reserved`; records reservation keyed by `ref`; calls `maybeRequisition`; returns `{ ok: shortfall === 0, reserved: qty - shortfall, shortfall }`.
-- `release(ref)` — looks up reservation, decrements `reserved` by qty, deletes reservation. No-op if ref unknown.
-- `consume(ref)` — looks up reservation, decrements both `onHand` and `reserved` by qty, deletes reservation, calls `maybeRequisition`.
-- `receive(reqId)` — looks up requisition, adds qty to `onHand` for its sku, marks requisition closed (removed from open set).
-- `list()` — returns array of `{ sku, onHand, reserved, available }` snapshots.
-- `lowStock()` — returns skus where `available(sku) <= reorderPoint`.
-- `requisitions()` — returns array of open requisitions `{ id, sku, qty }`.
-- `reservations()` — returns array of `{ ref, sku, qty }`.
+**Internal helpers** (not exported):
+- `assertKnownSku(sku)` — throws if `sku` not in catalog (AC-F05-5).
+- `availableOf(sku)` — returns `onHand - reserved`.
+- `maybeRequisition(sku)` — opens a requisition if `availableOf(sku) <= reorderPoint` and none open.
+
+**Exported factory**: `createInventory(parts)` returns the object below; no module-level mutable state — each call yields an isolated instance.
 
 ## Contract signatures
+
 ```
-createInventory(parts?: Array<{ sku: string, onHand: number, reorderPoint: number }>)
-→ {
-  reserve(sku: string, qty: number, ref: string): { ok: boolean, reserved: number, shortfall: number },
-  release(ref: string): void,
-  consume(ref: string): void,
-  receive(reqId: string): void,
-  available(sku: string): number,
-  list(): Array<{ sku, onHand, reserved, available }>,
-  lowStock(): Array<string>,
-  requisitions(): Array<{ id, sku, qty }>,
-  reservations(): Array<{ ref, sku, qty }>
-}
+createInventory(parts?: Array<{ sku: string, onHand: number, reorderPoint: number, reorderQty: number }>)
+  → {
+    reserve(sku: string, qty: number, ref: string): { ok: boolean, reserved: number, shortfall: number },
+    release(ref: string): void,
+    consume(ref: string): void,
+    receive(reqId: string|number): void,
+    available(sku: string): number,
+    list(): Array<{ sku, onHand, reserved, available }>,
+    lowStock(): Array<{ sku, available, reorderPoint }>,
+    requisitions(): Array<{ reqId, sku, qty, status }>,
+    reservations(): Array<{ ref, sku, qty }>
+  }
 ```
+
+All functions validate `sku`/`ref`/`reqId` existence before mutating state; unknown references throw `Error`.
 
 ## AC → design mapping
+
 | AC id | Design element |
 |---|---|
-| AC-F05-1 | `reserve()` clamps to `available(sku)`, computes shortfall, never lets `available` go negative |
-| AC-F05-2 | `release()` decrements `reserved` only; `consume()` decrements `onHand` and `reserved` and deletes reservation |
-| AC-F05-3 | `maybeRequisition()` checks for an existing open requisition per sku before creating a new one |
-| AC-F05-4 | `receive(reqId)` adds qty to `onHand` and removes requisition from open set |
-| AC-F05-5 | `assertKnownSku()` called at entry of every sku-accepting method, throws on unknown sku |
+| AC-F05-1 | `reserve` computes `shortfall = max(0, qty - availableOf(sku))`, reserves only `qty - shortfall`, never lets `reserved > onHand` |
+| AC-F05-2 | `release(ref)` decrements `reserved` and deletes reservation entry; `consume(ref)` decrements both `onHand` and `reserved` by reserved qty, deletes entry, then calls `maybeRequisition` |
+| AC-F05-3 | `maybeRequisition` checks `openReqBySku` before inserting; invoked after `reserve`/`consume` state changes |
+| AC-F05-4 | `receive(reqId)` adds `requisitions.get(reqId).qty` to `onHand`, sets status `closed`, removes from `openReqBySku` |
+| AC-F05-5 | `assertKnownSku` called in `reserve`, `available`; `release`/`consume` validate `ref` exists; `receive` validates `reqId` exists |
 
 ## Security & data classification
-Stock levels, reservations and requisitions are **C1 internal** (per org data classification: "part catalogue and stock levels" is explicitly C1). Work-order references embedded in reservations may reveal maintenance activity classified **C2**; treat `ref` strings as opaque and avoid logging raw WO content beyond the ref id. This module is edge-resident, pure computation with no network/OT I/O — it is inherently read-only towards OT (no PLC/OPC-UA writes), consistent with the advisory nature of requisitions/work orders. Input validation: every sku-taking call rejects unknown skus (throw), quantities must be finite numbers (reject NaN/Infinity per telemetry-untrusted-input standard) before mutating state.
+Inventory data (SKU, quantities, reorder thresholds) is **C1 Internal** per the org data classification standard — low impact if disclosed, may live on edge gateway storage and be synced to cloud/Meko without extra encryption-at-rest beyond standard controls. The module never touches OT control paths: it has no network or MQTT client and is purely in-memory/read computation on data it owns — it is not merely read-only toward OT, it has zero OT dependency. All quantities are validated as finite non-negative numbers (reject NaN/Infinity per IoT standard, applied here as general input hygiene); unknown SKU/ref/reqId values throw rather than silently defaulting. No operator or technician identity is accepted or stored anywhere in this module, only SKU and WO reference strings, per the org privacy standard.
 
 ## Reused team decisions
-- Data classification model (C0–C3) from `specs/02-design/security.md` applied: stock levels are C1.
-- Edge analytics read-only towards OT — this module never writes to PLC/OPC-UA, only advisory requisitions/reservations.
-- No third-party dependencies added, per firmware/edge module standard.
-- Untrusted-input rejection pattern (reject non-finite values, unknown ids) reused for sku/qty validation.
+- Followed `createInventory` exact contract shape recalled from plan/spec, unmodified.
+- Applied C1 classification for stock levels per the security-design data classification memory.
+- Enforced read-only-toward-OT / no-OT-dependency posture as required for all F0x modules.
+- Applied org privacy standard: no operator/technician names, only SKU and WO refs.

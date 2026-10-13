@@ -1,6 +1,6 @@
 # F06 test report
 
-Run f06-mugyr450 · 25 Sept 2026, 18:28:30 IST
+Run f06-mv6e0rx0 · 13 Oct 2026, 13:30:43 IST
 
 | | Acceptance criterion | Result |
 |---|---|---|

@@ -1,210 +1,160 @@
 // F06 — Natural-language asset queries (NLQ)
-// Pure planner + health scorer. No I/O, no network, no eval (org standard ADR-001).
-// Grounded fleet metadata is imported from the reference fleet definitions only.
-// BUG-001: adds status-clarification formatting via answerFromSnapshot/isLive.
-// parseQuery/healthScore contracts are unchanged (AC-BUG001-2).
+// Pure, stateless query planner + health scorer. No I/O, no network, no mutable state.
+// Reuses fleet reference data only (per atlas:F06/plan decision — no duplication of
+// F02/F03/F05 internal logic). AC ids cited inline below.
+
 import { FLEET, ASSET_TYPES } from '../../reference/fleet.js';
 
-// ---- normalize -------------------------------------------------------
-function normalize(text) {
-  return String(text ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
-}
+const MAX_LEN = 500; // guard against pathological input before regex matching (ReDoS hygiene)
 
-// ---- intent resolution (AC-F06-1) -------------------------------------
-// Fixed-order rule cascade; first match wins. Bounded/anchored regexes
-// only — text is untrusted free input, never eval'd (IoT security standard).
+// ---- AC-F06-1: intent cascade, first match wins, order is normative ----
 const INTENT_RULES = [
-  { intent: 'inventory', re: /\b(parts?|spares?|stock|inventory|reorder)\b/ },
-  { intent: 'work_orders', re: /\b(work\s?orders?|wos?|maintenance backlog)\b/ },
-  { intent: 'car', re: /\b(cars?|corrective|root cause)\b/ },
-  { intent: 'anomalies', re: /\b(anomal\w*|alarms?|alerts?|fault\w*|risk)\b/ },
-  { intent: 'trend', re: /\b(trend|history|over time)\b|\blast\s+\d+\s*\w*/ },
-  { intent: 'ranking', re: /\b(worst|rank\w*|most|healthiest|least)\b/ },
+  { intent: 'inventory', re: /\bparts?\b|\bspares?\b|\bstock\b|\binventory\b|\breorder\b/ },
+  { intent: 'work_orders', re: /\bwork\s*orders?\b|\bwos?\b|\bmaintenance\s+backlog\b/ },
+  { intent: 'car', re: /\bcars?\b|\bcorrective\b|\broot\s+cause\b/ },
+  { intent: 'anomalies', re: /\banomal\w*\b|\balarms?\b|\balerts?\b|\bfault\w*\b|\brisk\b/ },
+  { intent: 'trend', re: /\btrend\b|\bhistory\b|\bover\s+time\b|\blast\s+\d+/ },
+  { intent: 'ranking', re: /\bworst\b|\brank\w*\b|\bmost\b|\bhealthiest\b|\bleast\b/ },
 ];
 
-function resolveIntent(normText) {
+function matchIntent(lower) {
   for (const rule of INTENT_RULES) {
-    if (rule.re.test(normText)) return rule.intent;
+    if (rule.re.test(lower)) return rule.intent;
   }
   return 'condition';
 }
 
-// ---- asset ids (AC-F06-2) ----------------------------------------------
-// Matches canonical dashed ids (MTR-101) and spaced forms (SHF 301),
-// case-preserved on the original text.
-const ASSET_ID_RE = /\b([A-Z]{2,4})[-\s](\d{2,4})\b/g;
+// ---- AC-F06-2: asset ids (incl. spaced "SHF 301") ----
+const ASSET_ID_RE = /\b([A-Z]{3})[-\s](\d{3})\b/g;
 
-function resolveAssetIds(originalText) {
-  const ids = [];
+function extractAssetIds(rawText) {
+  const ids = new Set();
   let m;
   ASSET_ID_RE.lastIndex = 0;
-  while ((m = ASSET_ID_RE.exec(originalText)) !== null) {
-    const canonical = `${m[1]}-${m[2]}`;
-    if (!ids.includes(canonical)) ids.push(canonical);
+  while ((m = ASSET_ID_RE.exec(rawText)) !== null) {
+    ids.add(`${m[1].toUpperCase()}-${m[2]}`);
   }
-  return ids;
+  return [...ids];
 }
 
-// ---- asset types (AC-F06-2) ---------------------------------------------
-function resolveAssetTypes(normText) {
+// ---- AC-F06-2: asset types, with compressor-before-bare-centrifugal disambiguation ----
+function extractAssetTypes(lower) {
   const types = [];
-  const has = (re) => re.test(normText);
+  const add = (t) => { if (!types.includes(t)) types.push(t); };
 
-  if (has(/\bmotors?\b/)) types.push('motor');
-
-  const hasCompressor = has(/\bcompressors?\b/);
-  const hasPumpWord = has(/\bpumps?\b/);
-  const hasCentrifugal = has(/\bcentrifugal\b/);
-
-  if (hasCompressor) types.push('centrifugal_compressor');
-  // "pump" or bare "centrifugal" (without compressor) resolves to centrifugal_pump;
-  // "centrifugal" alone does not add pump if compressor is already present.
-  if (hasPumpWord || (hasCentrifugal && !hasCompressor)) {
-    if (!types.includes('centrifugal_pump')) types.push('centrifugal_pump');
+  if (/\bmotors?\b/.test(lower)) add('motor');
+  if (/\bcompressors?\b/.test(lower)) add('centrifugal_compressor');
+  if (/\bpumps?\b/.test(lower) || (/\bcentrifugal\b/.test(lower) && !types.includes('centrifugal_compressor'))) {
+    add('centrifugal_pump');
   }
-
-  if (has(/\bshafts?\b/)) types.push('shaft');
-  if (has(/\bgear\s?box(es)?\b/)) types.push('gearbox');
+  if (/\bshafts?\b/.test(lower)) add('shaft');
+  if (/\bgearbox\b/.test(lower) || /\bgear\s+box\b/.test(lower)) add('gearbox');
 
   return types;
 }
 
-// ---- metrics (AC-F06-3) --------------------------------------------------
-const METRIC_MAP = [
-  { re: /\b(vibrat\w*|shak\w*)\b/, metric: 'vibration' },
-  { re: /\bbearing\w*\b/, metric: 'bearingTemp' },
-  { re: /\b(winding\w*|stator)\b/, metric: 'windingTemp' },
-  { re: /\b(current|amps?|load)\b/, metric: 'current' },
-  { re: /\b(rpm|speed)\b/, metric: 'rpm' },
-  { re: /\bflow\b/, metric: 'flow' },
-  { re: /\b(suction|npsh|cavitat\w*)\b/, metric: 'suctionPressure' },
-  { re: /\b(discharge pressure|head)\b/, metric: 'dischargePressure' },
-  { re: /\b(misalign\w*|alignment)\b/, metric: 'misalignment' },
-  { re: /\b(orbit|runout)\b/, metric: 'shaftOrbit' },
-  { re: /\btorque\b/, metric: 'torque' },
-  { re: /\bsurge\b/, metric: 'surgeMargin' },
-  { re: /\boil\b/, metric: 'oilTemp' },
-  { re: /\b(particle\w*|debris)\b/, metric: 'particleCount' },
+// ---- AC-F06-3: metric keywords ----
+const METRIC_KEYWORDS = [
+  [/vibrat|shak/, 'vibration'],
+  [/bearing/, 'bearingTemp'],
+  [/winding|stator/, 'windingTemp'],
+  [/\bcurrent\b|\bamps?\b|\bload\b/, 'current'],
+  [/\brpm\b|\bspeed\b/, 'rpm'],
+  [/\bflow\b/, 'flow'],
+  [/suction|npsh|cavitat/, 'suctionPressure'],
+  [/discharge\s+pressure|\bhead\b/, 'dischargePressure'],
+  [/misalign|alignment/, 'misalignment'],
+  [/orbit|runout/, 'shaftOrbit'],
+  [/torque/, 'torque'],
+  [/surge/, 'surgeMargin'],
+  [/\boil\b/, 'oilTemp'],
+  [/particle|debris/, 'particleCount'],
 ];
 
-function resolveMetrics(normText) {
+function extractMetrics(lower) {
   const metrics = [];
-  for (const { re, metric } of METRIC_MAP) {
-    if (re.test(normText) && !metrics.includes(metric)) metrics.push(metric);
+  for (const [re, metric] of METRIC_KEYWORDS) {
+    if (re.test(lower) && !metrics.includes(metric)) metrics.push(metric);
   }
   return metrics;
 }
 
-// ---- time window (AC-F06-3) ---------------------------------------------
-const WINDOW_UNITS = {
-  s: 1, sec: 1, seconds: 1,
-  m: 60, min: 60, minutes: 60,
-  h: 3600, hours: 3600,
+// ---- AC-F06-3: time windows ----
+const WINDOW_RE = /\blast\s+(\d+)\s*(seconds|second|secs|sec|s|minutes|minute|mins|min|m|hours|hour|h)\b/i;
+const UNIT_TO_SEC = {
+  s: 1, sec: 1, secs: 1, second: 1, seconds: 1,
+  m: 60, min: 60, mins: 60, minute: 60, minutes: 60,
+  h: 3600, hour: 3600, hours: 3600,
 };
 
-function resolveWindow(normText) {
-  const m = normText.match(/\blast\s+(\d+)\s*(s|sec|seconds|m|min|minutes|h|hours)\b/);
+function extractWindow(lower) {
+  const m = WINDOW_RE.exec(lower);
   if (!m) return 300;
   const n = parseInt(m[1], 10);
-  const unit = WINDOW_UNITS[m[2]] ?? 1;
+  const unit = UNIT_TO_SEC[m[2].toLowerCase()];
+  if (!Number.isFinite(n) || !unit) return 300;
   return n * unit;
 }
 
-// ---- asset resolution ----------------------------------------------------
-function resolveAssets(assetIds, assetTypes, fleet) {
-  if (assetIds.length > 0) return assetIds;
-  if (assetTypes.length > 0) {
-    const matched = fleet.filter((a) => assetTypes.includes(a.type)).map((a) => a.id);
-    if (matched.length > 0) return matched;
+// ---- resolution of the slice of fleet to answer from ----
+function resolveAssets(assetIds, assetTypes) {
+  if (assetIds.length) return assetIds;
+  if (assetTypes.length) {
+    const ids = FLEET.filter((a) => assetTypes.includes(a.type)).map((a) => a.id);
+    if (ids.length) return ids;
   }
-  return fleet.map((a) => a.id);
+  return FLEET.map((a) => a.id);
 }
 
-// ---- exported: parseQuery (AC-F06-1..3, AC-BUG001-2: unchanged shape) ----
-export function parseQuery(text, fleet = FLEET) {
-  const normText = normalize(text);
-  const intent = resolveIntent(normText);
-  const assetIds = resolveAssetIds(String(text ?? ''));
-  const assetTypes = resolveAssetTypes(normText);
-  const metrics = resolveMetrics(normText);
-  const windowSec = resolveWindow(normText);
-  const resolvedAssets = resolveAssets(assetIds, assetTypes, fleet);
+/**
+ * parseQuery — deterministic NL query planner.
+ * AC-F06-1: intent cascade. AC-F06-2: asset ids/types. AC-F06-3: metrics/window.
+ */
+export function parseQuery(text) {
+  const raw = typeof text === 'string' ? text : String(text ?? '');
+  const bounded = raw.slice(0, MAX_LEN);
+  const lower = bounded.toLowerCase();
+
+  const intent = matchIntent(lower);
+  const assetIds = extractAssetIds(bounded);
+  const assetTypes = extractAssetTypes(lower);
+  const metrics = extractMetrics(lower);
+  const windowSec = extractWindow(lower);
+  const resolvedAssets = resolveAssets(assetIds, assetTypes);
 
   return { intent, assetIds, assetTypes, metrics, windowSec, resolvedAssets };
 }
 
-// ---- exported: healthScore (AC-F06-4, AC-BUG001-2: unchanged logic) ------
-// Deviation-weighted scoring against reference nominal ranges (mean, sigma).
-// Half-sigma tolerance band absorbs normal sensor noise; deviations beyond
-// that accumulate and are mapped through an exponential decay so a single
-// severe deviation (or a couple of moderate ones) drives the score well
-// below 50, while nominal readings stay pinned at 100.
+/**
+ * healthScore — AC-F06-4: 100 at nominal, falls below 50 with severe deviation.
+ * Uses ASSET_TYPES[type].nominal[metric] = [mean, sigma] from the shared fleet
+ * reference data (no re-derivation of F02's internal detection logic).
+ */
 export function healthScore(assetType, metrics) {
-  const typeDef = ASSET_TYPES?.[assetType];
-  if (!typeDef?.nominal || !metrics || typeof metrics !== 'object') return 100;
+  const spec = ASSET_TYPES[assetType];
+  if (!spec || !spec.nominal || !metrics || typeof metrics !== 'object') return 100;
 
-  let sumD = 0;
-  let counted = 0;
+  let maxZ = 0;
+  let sumSq = 0;
+  let n = 0;
 
   for (const [metric, value] of Object.entries(metrics)) {
-    const range = typeDef.nominal[metric];
-    if (!range) continue;
-    const [mean, sigma] = range;
-    if (!Number.isFinite(value) || !Number.isFinite(mean) || !Number.isFinite(sigma) || sigma <= 0) continue;
-    const z = Math.abs((value - mean) / sigma);
-    const d = Math.max(0, z - 0.5);
-    sumD += d;
-    counted += 1;
+    if (!Number.isFinite(value)) continue; // untrusted input: reject non-finite values
+    const nom = spec.nominal[metric];
+    if (!nom) continue;
+    const [mean, sigma] = nom;
+    if (!(sigma > 0)) continue;
+    const z = Math.abs(value - mean) / sigma;
+    maxZ = Math.max(maxZ, z);
+    sumSq += z * z;
+    n += 1;
   }
 
-  if (counted === 0) return 100;
+  if (n === 0) return 100;
 
-  const score = 100 * Math.exp(-sumD / 2);
-  return Math.max(0, Math.min(100, Math.round(score * 100) / 100));
-}
+  const rms = Math.sqrt(sumSq / n);
+  const combined = maxZ * 0.6 + rms * 0.4;
+  const score = 100 - 14 * Math.pow(combined, 1.4);
 
-// ---- BUG-001: status clarification helpers --------------------------------
-// isLive(asset) — internal, not exported. Reads asset.status defensively;
-// falls back to `!asset.openAnomaly` when status is absent, and defaults to
-// "Not Live" for missing/non-boolean signals (reject untrusted telemetry,
-// IoT security standard). Read-only: never mutates asset/snapshot.
-function isLive(asset) {
-  if (!asset || typeof asset !== 'object') return false;
-  if (typeof asset.status === 'boolean') return asset.status;
-  if (typeof asset.status === 'string') {
-    const s = asset.status.toLowerCase();
-    if (s === 'live' || s === 'up' || s === 'online') return true;
-    if (s === 'not live' || s === 'down' || s === 'offline') return false;
-  }
-  if ('openAnomaly' in asset) return !asset.openAnomaly;
-  return false;
-}
-
-// ---- exported: answerFromSnapshot (AC-BUG001-1) ---------------------------
-// (plan, snapshot) -> string. Additive branch only: fires for `condition`
-// intent queries with no explicit metrics requested (generic "how is X" /
-// "is X live" phrasing), per the design delta. Metric-specific `condition`
-// queries and all other intents are untouched by callers of this helper —
-// parseQuery/healthScore themselves are not modified (AC-BUG001-2).
-export function answerFromSnapshot(plan, snapshot) {
-  const assets = Array.isArray(snapshot?.assets) ? snapshot.assets : [];
-
-  if (plan?.intent === 'condition' && Array.isArray(plan.metrics) && plan.metrics.length === 0) {
-    const resolved = new Set(plan.resolvedAssets ?? []);
-    const lines = assets
-      .filter((a) => resolved.size === 0 || resolved.has(a.id))
-      .map((a) => `Asset ${a.id} - ${isLive(a) ? 'Live' : 'Not Live'}`);
-    return lines.join(' ');
-  }
-
-  // Fallback for non-status condition queries / other intents: preserve
-  // prior generic behaviour shape (health-score based summary per asset).
-  const resolved = new Set(plan?.resolvedAssets ?? []);
-  const lines = assets
-    .filter((a) => resolved.size === 0 || resolved.has(a.id))
-    .map((a) => {
-      const score = healthScore(a.type, a.metrics ?? {});
-      return `Asset ${a.id} health ${score}/100`;
-    });
-  return lines.join(' ');
+  return Math.round(Math.max(0, Math.min(100, score)));
 }

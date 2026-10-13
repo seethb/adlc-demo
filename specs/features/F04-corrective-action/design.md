@@ -1,63 +1,61 @@
 # F04 · Corrective Action Reports (CAR) — Design
 
-## Module structure (`edge/features/F04-corrective-action/index.js`)
+## Module structure
+`edge/features/F04-corrective-action/index.js` exports `createCarService()`.
 
-Internal state (module-closure, in-memory, edge-resident):
-- `cars: CAR[]` — all CARs created so far, append-only.
-- `index: Map<string, string>` — dedup map keyed by `${asset}::${failureMode}` → CAR id (AC-F04-3).
-- `seq: number` — counter for `CAR-nnn` id generation (AC-F04-4).
+Internal state (closure, in-memory, not persisted):
+- `cars: CAR[]` — all CARs created across calls, insertion order.
+- `seenKeys: Set<string>` — `assetId|failureMode` keys already covered (AC-F04-3).
+- `seq: number` — counter for `CAR-nnn` ids.
 
-Functions:
-- `createCarService()` → returns `{ evaluate, list }`.
-- `evaluate(workOrders)` (exported via closure) — `// AC-F04-1 // AC-F04-2 // AC-F04-3`: validates input, groups WOs by asset+failureMode, applies trigger rules, calls `openCar` for new cases only, returns newly created CARs.
-- `list()` — returns a shallow copy of `cars`.
-- `groupByAssetFailureMode(workOrders)` (internal helper) — builds `{ asset, failureMode, wos, occurrences }` groups.
-- `decideTrigger(group)` (internal helper) — `// AC-F04-1 // AC-F04-2`: returns `"critical-failure"` if any WO priority is `P1`; else `"recurrence"` if `wos.length >= 2` or any single WO has `occurrences >= 3`; else `null`.
-- `buildCar(group, trigger)` (internal helper) — `// AC-F04-4`: allocates `CAR-nnn` id, fills D1–D7 from the group and the reliability knowledge base (D4, D7), never invents text.
-- `validateWorkOrder(wo)` (internal helper) — rejects malformed WOs: missing `asset`/`failureMode`, non-finite counts, unknown priority values.
+Internal helpers (not exported):
+- `keyOf(wo)` → `${wo.assetId}|${wo.failureMode}`.
+- `isCritical(wo)` → `wo.priority === 'P1'`.
+- `isRecurrence(group)` → group of WOs sharing a key has `length >= 2` OR any single WO has `occurrences >= 3`.
+- `nextId()` → `CAR-${String(++seq).padStart(3,'0')}`.
+- `lookupRootCause(failureMode)` → queries reliability failure-mode handbook (static map/table bundled with module); falls back to a clearly-marked hypothesis string `"hypothesis: <failureMode> — unconfirmed, pending inspection"` if no handbook entry, per the risk note — never fabricated as fact.
+- `buildCar(wo, trigger, groupWos)` → assembles the 8D object.
 
 ## Contract signatures
+```
+createCarService() → { evaluate(workOrders), list() }
 
-```js
-createCarService() → {
-  evaluate(workOrders: WorkOrder[]): CAR[],  // newly created CARs only
-  list(): CAR[]
-}
-
-WorkOrder (from F03) = {
-  id: string, asset: string, failureMode: string,
-  priority: "P1"|"P2"|"P3", occurrences: number, status: string, ...
-}
+evaluate(workOrders: WO[]) → CAR[]   // only newly created CARs this call
+list() → CAR[]                      // all CARs ever created
 
 CAR = {
-  id: "CAR-nnn",
-  asset: string,
-  failureMode: string,
-  trigger: "critical-failure" | "recurrence",
-  d1: string, // team: reliability engineering
-  d2: string, // problem: asset, failure mode, WO/occurrence count
-  d3: string, // containment
-  d4: string, // root-cause hypothesis, from KB
-  d5: string, // corrective actions, from WO playbook
-  d6: string, // verify (7 days no recurrence)
-  d7: string  // preventive action
+  id: 'CAR-001', assetId, failureMode,
+  trigger: 'critical-failure' | 'recurrence',
+  workOrderIds: string[], createdAt: ISOString,
+  d1_team: 'reliability engineering',
+  d2_problem: string,        // asset, failure mode, WO count, occurrence count
+  d3_containment: string,    // P1 → load reduction/standby; else increase inspection
+  d4_rootCause: string,      // handbook text or marked hypothesis
+  d5_correctiveActions: string[],  // playbook tasks from WO.tasks
+  d6_verify: string,         // '7 days without recurrence'
+  d7_preventive: string      // monitoring/procedure change text
 }
 ```
+`evaluate` groups input WOs by `keyOf`, checks each group against trigger rules, skips any key already in `seenKeys`, builds at most one CAR per new key, adds it to `cars`/`seenKeys`, returns the new ones.
 
 ## AC → design mapping
-
 | AC id | Design element |
 |---|---|
-| AC-F04-1 | `decideTrigger` returns `"critical-failure"` when any WO in group has `priority === "P1"`; `evaluate` opens a CAR for it |
-| AC-F04-2 | `decideTrigger` recurrence branch: `wos.length >= 2` or any `occurrences >= 3`; single P2 with no repeat yields `null`, no CAR |
-| AC-F04-3 | `index` map keyed by `asset::failureMode` checked before `openCar`; re-running `evaluate` on same input creates no duplicates (idempotent) |
-| AC-F04-4 | `buildCar` allocates sequential `CAR-nnn` via `seq`, and populates d1..d7 all non-empty before pushing to `cars` |
+| AC-F04-1 | `isCritical(wo)` true for any WO in group → `trigger: 'critical-failure'`, checked before recurrence rule |
+| AC-F04-2 | `isRecurrence(group)`: group.length>=2 or any wo.occurrences>=3 → `trigger: 'recurrence'`; single P2 WO with occurrences<3 fails both checks → no CAR |
+| AC-F04-3 | `seenKeys` guard in `evaluate`: once a key has a CAR, later groups with same key are skipped, no duplicates across calls |
+| AC-F04-4 | `nextId()` guarantees `CAR-nnn`; `buildCar` always sets all seven D-fields, never undefined/empty |
 
 ## Security & data classification
-CARs and work orders are **C2 Confidential** (production capacity/process-weakness data). They live edge-resident only, in module memory — no cloud sync, no OT write path. Per org privacy standard, CARs reference **asset ids and failure-mode ids only**, never operator/technician names — d1 "team" is a role label, not a person. All inputs (`workOrders`) are treated as untrusted per IoT security standard: `validateWorkOrder` rejects non-finite `occurrences`, unknown priority values, and missing asset/failureMode before grouping. Module is strictly read-only towards OT: `evaluate`/`list` never write PLC registers, coils or setpoints; CAR output is advisory only. D4/D7 text must be sourced from the reliability knowledge base/failure-mode handbook, never generated inline, per the feature's risk note.
+CARs are **C2 Confidential** (per org data classification: work orders, CARs reveal process/plant weaknesses). Module:
+- Reads only `assetId`/`failureMode`/`priority`/`occurrences`/`id`/`tasks` from F03 WOs — never operator/technician names (org privacy standard: asset ids only).
+- Read-only toward OT: this module never writes to OT systems or work orders; it only consumes WO data and produces CARs for the reliability team.
+- All state stays on-edge in-memory (C2 data must not leave edge boundary without explicit cloud sync policy, out of scope here).
+- Input validation: `evaluate` defensively skips WOs missing `assetId`/`failureMode`; does not throw on malformed input, simply excludes it from grouping.
+- No secrets, no PII, no raw telemetry handled by this module.
 
 ## Reused team decisions
-- CAR shape and field set reused verbatim from `adlc:atlas · F04/plan`.
-- F03's `createWorkOrderService` output shape (`adlc:atlas · F03/plan`) is the sole input contract for `evaluate`.
-- Data classification (C2 confidential for CARs/work orders) and read-only-towards-OT stance reused from the org IoT security standard and F01's precedent (`adlc:orion`).
-- Pseudonymous-id-only privacy rule applied to all CAR fields per org privacy standard.
+- Followed F03's exact WO shape (`assetId`, `failureMode`, `priority`, `occurrences`, `id`, `tasks`) as the sole input contract.
+- Applied org privacy standard: CARs carry asset ids only, never technician/operator names.
+- Applied C2 classification from the security design doc to CARs/work orders.
+- Used the 8D procedure field definitions (D1–D7) from the recalled reliability knowledge-base section verbatim for `buildCar`.

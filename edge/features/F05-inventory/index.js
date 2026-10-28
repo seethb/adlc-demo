@@ -3,9 +3,23 @@
 // CR-001: long-lead parts (leadTimeDays >= 14) are critical spares — they reorder
 // one unit early (available <= reorderPoint + 1) and requisitions carry
 // priority/etaDays/reason. See specs/changes/CR-001-f05-expedite-long-lead/design.md.
+// CR-002: list()/lowStock() items carry `criticalAlert` = available < 5.
+// CR-003: list()/lowStock() items carry `severeAlert` = available < 2.
+// CR-004 (AC-CR004-1/AC-CR004-2): list()/lowStock() items carry `lowStockAlert` =
+// available < 10, computed by the stateless helper computeAlertTiers(avail).
+// See specs/changes/CR-004-f05-prepare-a-notification-for-any-spare-par/design.md.
 
 function isPositiveInt(n) {
   return Number.isFinite(n) && Number.isInteger(n) && n > 0;
+}
+
+// CR-004: pure helper deriving all alert tiers from available qty. No mutation.
+function computeAlertTiers(avail) {
+  return {
+    lowStockAlert: avail < 10,
+    criticalAlert: avail < 5,
+    severeAlert: avail < 2,
+  };
 }
 
 export function createInventory(parts = []) {
@@ -128,9 +142,13 @@ export function createInventory(parts = []) {
 
   // AC-CR001-4: list() surfaces part-master fields for the edge UI, with `low`
   // computed from the same threshold used to trigger requisitions (AC-CR001-1).
+  // AC-CR004-1: also surfaces lowStockAlert (available < 10) alongside the
+  // existing criticalAlert (CR-002, <5) and severeAlert (CR-003, <2) tiers,
+  // all derived statelessly via computeAlertTiers.
   function list() {
     return [...stock.entries()].map(([sku, s]) => {
       const avail = s.onHand - s.reserved;
+      const tiers = computeAlertTiers(avail);
       return {
         sku,
         name: s.name,
@@ -140,12 +158,17 @@ export function createInventory(parts = []) {
         reorderPoint: s.reorderPoint,
         leadTimeDays: s.leadTimeDays,
         low: avail <= threshold(s),
+        lowStockAlert: tiers.lowStockAlert,
+        criticalAlert: tiers.criticalAlert,
+        severeAlert: tiers.severeAlert,
       };
     });
   }
 
   function lowStock() {
-    return list().filter((i) => i.low);
+    return list().filter(
+      (i) => i.low || i.lowStockAlert || i.criticalAlert || i.severeAlert
+    );
   }
 
   function requisitions() {

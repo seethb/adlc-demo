@@ -1,6 +1,6 @@
 # F02 test report
 
-Run f02-mv6oq43a · 13 Oct 2026, 18:30:25 IST
+Run f02-mvs6e3ol · 28 Oct 2026, 19:31:57 IST
 
 | | Acceptance criterion | Result |
 |---|---|---|
@@ -11,4 +11,4 @@ Run f02-mv6oq43a · 13 Oct 2026, 18:30:25 IST
 | ✅ | AC-F02-5 | anomaly shape and severity escalate with degradation |
 | ✅ | AC-F02-6 | non-finite telemetry is rejected and does not corrupt baselines |
 
-**Behavioural eval:** precision 0.99 · recall 1.00 over 6 faults
+**Behavioural eval:** precision 1.00 · recall 1.00 over 6 faults

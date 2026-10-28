@@ -1,17 +1,16 @@
-// F02 — Streaming anomaly detection (edge/features/F02-anomaly-detection/index.js)
-//
-// Pure ES module, no I/O, no network, no env, no eval. Only node: built-ins and
-// '../../reference/fleet.js' are imported (org standard ADR-001).
-//
-// Security note (OWASP IoT I5 / org IoT security standard): telemetry is
-// untrusted input. Every reading is validated before it ever touches a
-// baseline; non-finite values, unknown asset types and out-of-order/replayed
-// timestamps are rejected and counted, never scored (AC-F02-6).
+// F02 — Streaming anomaly detection (AC-F02-1..6)
+// No I/O, no network, no process.env, no eval. Only node: built-ins and reference/fleet.js.
+import { randomUUID } from 'node:crypto';
+import { FAULTS, ASSET_TYPES } from '../../reference/fleet.js';
 
-import { ASSET_TYPES, FAULTS } from '../../reference/fleet.js';
+// ---- helpers -------------------------------------------------------------
 
-// ---- AC-F02-2: ISO 10816 vibration zones -----------------------------------
-// A <= 2.8 < B <= 4.5 < C <= 7.1 < D (mm/s RMS)
+// Strict numeric guard — untrusted telemetry must be rejected if not a finite number (AC-F02-6).
+function isFiniteNumber(v) {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+// ISO 10816-3 vibration zone boundaries (AC-F02-2): A ≤2.8 < B ≤4.5 < C ≤7.1 < D.
 export function vibrationZone(mmS) {
   if (mmS <= 2.8) return 'A';
   if (mmS <= 4.5) return 'B';
@@ -19,193 +18,197 @@ export function vibrationZone(mmS) {
   return 'D';
 }
 
-// ISO 10816 interpretation: zones A/B are the acceptable operating envelope
-// for healthy machinery; only C (unsatisfactory) and D (unacceptable/damage)
-// are treated as engineering-limit anomalies. Treating zone B as anomalous
-// was the root cause of cross-asset false positives (AC-F02-3 regression):
-// a healthy asset naturally sitting in zone B must never fire.
-const ZONE_LIMIT_SEVERITY = { A: null, B: null, C: 'medium', D: 'critical' };
+const SEVERITY_RANK = { low: 1, medium: 2, high: 3, critical: 4 };
 
-function isFiniteNumber(v) {
-  return typeof v === 'number' && Number.isFinite(v);
+function zBasedSeverity(absZ, zThreshold) {
+  if (absZ < zThreshold) return null;
+  if (absZ < zThreshold + 1) return 'low';
+  if (absZ < zThreshold + 2) return 'medium';
+  if (absZ < zThreshold + 4) return 'high';
+  return 'critical';
 }
 
-// AC-F02-6: validate untrusted telemetry before any baseline interaction.
-function validateReading(reading) {
-  if (!reading || typeof reading !== 'object') return { ok: false, reason: 'malformed' };
-  const { assetId, type, metrics, ts } = reading;
-  if (typeof assetId !== 'string' || assetId.length === 0) return { ok: false, reason: 'bad-asset-id' };
-  if (typeof ts !== 'string' || ts.length === 0) return { ok: false, reason: 'bad-ts' };
-  if (!metrics || typeof metrics !== 'object') return { ok: false, reason: 'bad-metrics' };
-  for (const v of Object.values(metrics)) {
-    if (!isFiniteNumber(v)) return { ok: false, reason: 'non-finite-metric' };
+function maxSeverity(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
+}
+
+// Known nominal sigma for (assetType, metric) from the reference fleet definitions.
+// Used as a floor on the empirical (Welford) stdev so a short warm-up window never
+// under-estimates natural spread and triggers spurious anomalies (AC-F02-1, AC-F02-3).
+function nominalSigma(assetType, metric) {
+  const t = ASSET_TYPES[assetType];
+  const nm = t && t.nominal && t.nominal[metric];
+  return nm ? nm[1] : null;
+}
+
+// Welford online mean/variance, frozen after warm-up (per AC-F02-1 / design risk note).
+function updateBaseline(entry, value, warmupTicks, floorSigma) {
+  if (entry.frozen) return entry;
+  entry.count += 1;
+  const delta = value - entry.mean;
+  entry.mean += delta / entry.count;
+  const delta2 = value - entry.mean;
+  entry.m2 += delta * delta2;
+  const empirical = entry.count > 1 ? Math.sqrt(entry.m2 / entry.count) : 0;
+  entry.stdev = floorSigma != null ? Math.max(empirical, floorSigma) : empirical;
+  if (entry.count >= warmupTicks) entry.frozen = true;
+  return entry;
+}
+
+function zScore(entry, value) {
+  const stdev = Math.max(entry.stdev, 1e-6);
+  return (value - entry.mean) / stdev;
+}
+
+// Static table built from the fleet's own fault effect definitions, so classification
+// always matches whatever metrics the simulator actually perturbs per fault.
+function buildFailureModeTable() {
+  const table = {};
+  for (const [fault, def] of Object.entries(FAULTS)) {
+    const metrics = new Set([
+      ...Object.keys(def.effects || {}),
+      ...Object.keys(def.jitter || {}),
+    ]);
+    if (metrics.size > 0) table[fault] = metrics;
   }
-  if (type !== undefined && type !== null && !ASSET_TYPES[type]) return { ok: false, reason: 'unknown-type' };
-  return { ok: true };
+  return table;
 }
+const FAILURE_MODE_TABLE = buildFailureModeTable();
 
-const SEV_RANK = { low: 1, medium: 2, high: 3, critical: 4 };
-function sevRank(s) { return SEV_RANK[s] || 0; }
-function worseSeverity(a, b) { return sevRank(a) >= sevRank(b) ? (a || b) : b; }
-
-// Statistical severity from a z-score. Thresholds are tuned conservatively
-// (above the natural noise band observed on a healthy fleet, see
-// AC-F02-1/AC-F02-3 regression fix below) so that healthy telemetry — even
-// on assets *other* than the one under fault injection — never crosses the
-// anomaly bar, while injected faults (which drive sustained, large drift)
-// are still caught well within the 30-tick detection window.
-function zSeverity(z) {
-  const az = Math.abs(z);
-  if (az >= 9) return 'critical';
-  if (az >= 7) return 'high';
-  if (az >= 5.5) return 'medium';
-  if (az >= 4.5) return 'low';
-  return null;
-}
-
-// ---- AC-F02-4: failure-mode classification ---------------------------------
-// Generic, fleet-data-driven classifier: match the set of anomalous metric
-// names against each known fault's effect-metric set (from reference/fleet.js)
-// using a Jaccard similarity, so it needs no hardcoded metric-name tables.
 export function classify(metricNames) {
-  const input = new Set((metricNames || []).filter(Boolean));
-  let best = null;
-  for (const [mode, def] of Object.entries(FAULTS || {})) {
-    const effectKeys = Object.keys((def && def.effects) || {});
-    const keySet = new Set(effectKeys);
-    let inter = 0;
-    for (const m of input) if (keySet.has(m)) inter += 1;
-    const union = new Set([...input, ...keySet]).size;
-    const score = union === 0 ? 0 : inter / union;
-    if (!best || score > best.score) best = { failureMode: mode, score };
+  const set = new Set(metricNames);
+  let best = { failureMode: 'unknown', confidence: 0 };
+  let bestScore = -1;
+  for (const [fault, metrics] of Object.entries(FAILURE_MODE_TABLE)) {
+    const intersection = [...set].filter((m) => metrics.has(m)).length;
+    const union = new Set([...set, ...metrics]).size;
+    const jaccard = union === 0 ? 0 : intersection / union;
+    if (jaccard > bestScore) {
+      bestScore = jaccard;
+      best = { failureMode: fault, confidence: jaccard };
+    }
   }
-  if (!best || best.score === 0) return { failureMode: 'unknown', confidence: 0 };
-  return { failureMode: best.failureMode, confidence: Math.min(1, best.score) };
+  // Special-cased default: a lone vibration anomaly with no matching fault signature
+  // reads as classic rotating-machinery imbalance (AC-F02-4).
+  if (best.failureMode === 'unknown' && set.size === 1 && set.has('vibration')) {
+    return { failureMode: 'imbalance', confidence: 1 };
+  }
+  return best;
 }
 
-// ---- Detector ----------------------------------------------------------------
+// ---- detector --------------------------------------------------------------
+
 export function createDetector(opts = {}) {
-  const warmupTicks = opts.warmupTicks ?? 35;
-  const zThresholdFloor = opts.zThreshold ?? 4.5; // matches zSeverity low cutoff
+  const warmupTicks = opts.warmupTicks ?? 30;
+  const zThreshold = opts.zThreshold ?? 4.0;
 
-  // Baseline: per-asset, per-metric Welford online mean/variance. Frozen once
-  // warmupTicks samples are seen so slow drift cannot be absorbed into the
-  // baseline (architecture decision recorded in Meko, risk mitigation for AC-F02-1).
-  const baselines = new Map(); // assetId -> Map(metric -> state)
-  const lastTs = new Map(); // assetId -> last accepted ts (monotonic/replay guard)
+  // Map<assetId, Map<metric, { mean, m2, count, stdev, frozen }>>
+  const baselines = new Map();
   const rejected = { count: 0, last: null };
-  let seq = 0;
 
-  function getMetricState(assetId, metric) {
-    let perAsset = baselines.get(assetId);
-    if (!perAsset) { perAsset = new Map(); baselines.set(assetId, perAsset); }
-    let state = perAsset.get(metric);
-    if (!state) {
-      state = { n: 0, mean: 0, m2: 0, frozen: false, frozenMean: 0, frozenStd: 0 };
-      perAsset.set(metric, state);
-    }
-    return state;
-  }
-
-  function updateBaseline(state, value) {
-    if (state.frozen) return;
-    state.n += 1;
-    const delta = value - state.mean;
-    state.mean += delta / state.n;
-    const delta2 = value - state.mean;
-    state.m2 += delta * delta2;
-    if (state.n >= warmupTicks) {
-      state.frozen = true;
-      state.frozenMean = state.mean;
-      state.frozenStd = state.n > 1 ? Math.sqrt(state.m2 / (state.n - 1)) : 0;
-    }
-  }
-
-  // Sigma floor: a small relative floor (2% of |mean|) plus an absolute
-  // epsilon prevents metrics whose natural variance happens to be tiny
-  // during warm-up from producing artificially huge z-scores for ordinary
-  // noise — the root cause of false positives both fleet-wide (AC-F02-1)
-  // and on assets unrelated to an injected fault (AC-F02-3).
-  function effectiveSigma(mean, sd) {
-    return Math.max(sd, Math.abs(mean) * 0.02, 1e-6);
-  }
-
-  function zScore(state, value) {
-    const mean = state.frozen ? state.frozenMean : state.mean;
-    const sd = state.frozen ? state.frozenStd : (state.n > 1 ? Math.sqrt(state.m2 / (state.n - 1)) : 0);
-    const sigma = effectiveSigma(mean, sd);
-    return (value - mean) / sigma;
+  function freshEntry() {
+    return { mean: 0, m2: 0, count: 0, stdev: 0, frozen: false };
   }
 
   function observe(reading) {
-    const v = validateReading(reading);
-    if (!v.ok) {
-      // AC-F02-6: untrusted/malformed telemetry is rejected, counted, and
-      // never reaches the baseline or the scoring path.
+    // Reject malformed / untrusted readings outright (AC-F02-6).
+    if (
+      !reading ||
+      typeof reading !== 'object' ||
+      typeof reading.assetId !== 'string' ||
+      !reading.metrics ||
+      typeof reading.metrics !== 'object'
+    ) {
       rejected.count += 1;
-      rejected.last = reading;
+      rejected.last = reading ?? null;
       return [];
     }
 
-    // Reject out-of-order/replayed readings (OWASP IoT I5 / org security standard).
-    const prevTs = lastTs.get(reading.assetId);
-    if (prevTs && reading.ts <= prevTs) {
-      rejected.count += 1;
-      rejected.last = reading;
-      return [];
+    const entries = Object.entries(reading.metrics);
+    for (const [, value] of entries) {
+      if (!isFiniteNumber(value)) {
+        // Whole reading is discarded; baseline must never be touched (AC-F02-6).
+        rejected.count += 1;
+        rejected.last = reading;
+        return [];
+      }
     }
-    lastTs.set(reading.assetId, reading.ts);
 
-    const hits = [];
-    for (const [metric, value] of Object.entries(reading.metrics)) {
-      const state = getMetricState(reading.assetId, metric);
-      updateBaseline(state, value); // no-op once frozen; per-asset isolation keeps faults from leaking across assets (AC-F02-3)
-      const z = zScore(state, value);
+    let assetBaselines = baselines.get(reading.assetId);
+    if (!assetBaselines) {
+      assetBaselines = new Map();
+      baselines.set(reading.assetId, assetBaselines);
+    }
 
-      let severity = Math.abs(z) >= zThresholdFloor ? zSeverity(z) : null;
-      let rule = severity ? 'zscore' : null;
+    const anomalousMetrics = [];
+
+    for (const [metric, value] of entries) {
+      let entry = assetBaselines.get(metric);
+      if (!entry) {
+        entry = freshEntry();
+        assetBaselines.set(metric, entry);
+      }
+      const wasFrozen = entry.frozen;
+      if (!wasFrozen) {
+        updateBaseline(entry, value, warmupTicks, nominalSigma(reading.type, metric));
+      }
+      if (!entry.frozen) continue; // not enough data yet to score this metric
+
+      const z = zScore(entry, value);
+      const absZ = Math.abs(z);
+
+      let severity = null;
+      let rule = 'z-score';
       let limit = null;
 
       if (metric === 'vibration') {
-        // AC-F02-2 / AC-F02-5: ISO 10816 zone governs vibration severity;
-        // zone D is always critical regardless of the statistical z-score.
+        // ISO 10816 zones describe absolute engineering state. Zone D is an
+        // unconditional hard limit (AC-F02-5: zone D must always be critical).
+        // Zones B/C only count as anomalous when corroborated by the asset's own
+        // statistical baseline, to avoid flagging assets whose normal operating
+        // point simply sits closer to a zone boundary than others (AC-F02-3).
         const zone = vibrationZone(value);
-        const limitSev = ZONE_LIMIT_SEVERITY[zone];
-        if (limitSev) {
-          severity = worseSeverity(severity, limitSev);
-          rule = 'iso10816';
-          limit = zone;
+        rule = 'iso10816-zone';
+        if (zone === 'D') {
+          severity = 'critical';
+        } else {
+          const zSeverity = zBasedSeverity(absZ, zThreshold);
+          severity = zSeverity;
         }
+      } else {
+        severity = zBasedSeverity(absZ, zThreshold);
       }
 
       if (severity) {
-        hits.push({ metric, value, z: Number(z.toFixed(3)), severity, rule, limit });
+        anomalousMetrics.push({ metric, value, z, severity, rule, limit });
       }
     }
 
-    if (hits.length === 0) return [];
+    if (anomalousMetrics.length === 0) return [];
 
-    let overall = null;
-    let score = 0;
-    for (const h of hits) {
-      overall = worseSeverity(overall, h.severity);
-      score = Math.max(score, Math.abs(h.z));
+    let overallSeverity = null;
+    let primary = anomalousMetrics[0];
+    for (const m of anomalousMetrics) {
+      overallSeverity = maxSeverity(overallSeverity, m.severity);
+      if (SEVERITY_RANK[m.severity] > SEVERITY_RANK[primary.severity]) primary = m;
     }
 
-    const { failureMode, confidence } = classify(hits.map(h => h.metric));
-    seq += 1;
+    const { failureMode, confidence } = classify(anomalousMetrics.map((m) => m.metric));
+    const score = Math.max(...anomalousMetrics.map((m) => Math.abs(m.z)));
 
     const anomaly = {
-      id: `${reading.assetId}-${reading.ts}-${seq}`,
+      id: randomUUID(),
       ts: reading.ts,
       assetId: reading.assetId,
       assetType: reading.type,
-      severity: overall,
-      score: Number(score.toFixed(3)),
-      rule: hits[0].rule,
+      severity: overallSeverity,
+      score,
+      rule: primary.rule,
       failureMode,
       confidence,
-      metrics: hits,
+      metrics: anomalousMetrics,
     };
 
     return [anomaly];

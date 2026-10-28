@@ -2,66 +2,60 @@
 
 ## Module structure (`edge/features/F02-anomaly-detection/index.js`)
 
-Exported:
-- `createDetector(opts?)`
-- `vibrationZone(mmS)`
-- `classify(metricNames)`
+**Exports:** `createDetector`, `vibrationZone`, `classify`
 
-Internal helpers:
-- `isFiniteNumber(v)` — strict numeric validation.
-- `validateReading(reading)` → `{ ok, reason }`, used by `observe` before any baseline touch.
-- `updateBaseline(state, assetId, metric, value)` — Welford online mean/variance; frozen once `warmupTicks` reached.
-- `zScore(baseline, value)` — `(value - mean) / max(spread, epsilon)`.
-- `limitSeverity(metric, value, assetType)` — checks OEM static limits (bearing/winding temp, surge margin, suction pressure, misalignment, orbit, oil) and vibration via `vibrationZone`.
-- `combineSeverity(zSev, limitSev)` — takes the worse of statistical and engineering-limit severity.
-- `buildAnomaly(reading, metricHits)` — assembles contract-shaped `Anomaly`, calls `classify`.
-- `FAILURE_RULES` — table mapping metric-name sets/patterns to `{ failureMode, confidence }`.
+**Internal helpers (not exported):**
+- `isFiniteNumber(v)` — strict numeric guard (`typeof v === 'number' && Number.isFinite(v)`).
+- `isoZone(mmS)` — boundary lookup backing `vibrationZone`.
+- `limitFor(assetType, metric)` — OEM limit table lookup (bearing temp, winding temp, surge margin, suction pressure, misalignment, orbit, oil).
+- `zScore(baseline, metric, value)` — `(value - mean) / stdev`, guarded against `stdev === 0`.
+- `severityFor(metric, z, zone, limit)` — maps z-score / zone / OEM limit breach to `low|medium|high|critical`; zone `D` forces `critical`.
+- `updateBaseline(baseline, metric, value)` — Welford online mean/variance during warm-up only; frozen after `opts.warmupTicks`.
+- `failureModeTable` — static map of metric-name-sets → `{ failureMode, weight }`, used by `classify`.
 
-Internal state (closure per `createDetector` instance):
-- `baselines: Map<assetId, Map<metric, { n, mean, m2, frozen }>>`
-- `warmupTicks` (opt, default 30)
+**Internal state (per detector instance, closed over in `createDetector`):**
+- `baselines: Map<assetId, Map<metric, { mean, m2, count, frozen }>>`
+- `warmupTicks` (default 30), `zThreshold` (default 3.0)
 - `rejected = { count: 0, last: null }`
-- `seenKeys: Map<assetId, lastTs>` for monotonic/replay rejection.
 
 ## Contract signatures
 
+```js
+createDetector(opts?: {
+  warmupTicks?: number,   // default 30
+  zThreshold?: number     // default 3.0
+}) => {
+  observe(reading: Reading) => Anomaly[],   // 0 or 1 element
+  rejected: { count: number, last: Reading|null }
+}
+
+vibrationZone(mmS: number) => 'A' | 'B' | 'C' | 'D'
+
+classify(metricNames: string[]) => { failureMode: string, confidence: number }
 ```
-createDetector(opts?: { warmupTicks?: number, zThreshold?: number })
-  → { observe(reading: Reading): Anomaly[], rejected: { count: number, last: Reading|null } }
 
-vibrationZone(mmS: number) → 'A' | 'B' | 'C' | 'D'
-
-classify(metricNames: string[]) → { failureMode: string, confidence: number }
-
-Reading = { ts: ISO-8601, assetId, type, metrics: { [metric]: number }, fault: string|null }
-
-Anomaly = { id, ts, assetId, assetType, severity: 'low'|'medium'|'high'|'critical',
-            score, rule, failureMode, confidence,
-            metrics: [{ metric, value, z, severity, rule, limit }] }
-```
-
-`observe` returns 0 or 1 `Anomaly` per call; invalid readings are rejected (counted, never scored, never affect baselines) and return `[]`.
+`Reading` matches F01's shape: `{ ts, assetId, type, metrics: {...}, fault }`.
+`Anomaly` matches the feature contract exactly (id, ts, assetId, assetType, severity, score, rule, failureMode, confidence, metrics[]).
 
 ## AC → design mapping
 
 | AC | Design element |
 |---|---|
-| AC-F02-1 | Baseline freezes spread at `warmupTicks`; `zThreshold` tuned conservative; validated input only feeds baseline |
-| AC-F02-2 | `vibrationZone` literal boundaries 2.8/4.5/7.1 mm/s RMS |
-| AC-F02-3 | Per-asset `Map` isolates baselines; z-score computed every tick → detection within 30 ticks, no cross-asset leakage |
-| AC-F02-4 | `classify` + `FAILURE_RULES` maps anomalous metric set → `failureMode`/`confidence` ≥60% of fault-window anomalies |
-| AC-F02-5 | `buildAnomaly` fixed shape; `limitSeverity` forces `critical` when `vibrationZone === 'D'` |
-| AC-F02-6 | `validateReading`/`isFiniteNumber` reject NaN/Infinity/non-number/unknown asset/replayed ts before baseline update; `rejected.count`/`last` updated |
+| AC-F02-1 | `updateBaseline` freezes spread after `warmupTicks`; z-threshold tuned so post-warm-up FP rate < 1%. |
+| AC-F02-2 | `vibrationZone` / `isoZone` pure function with hardcoded ISO 10816-3 boundaries (2.8/4.5/7.1). |
+| AC-F02-3 | Per-`assetId` baseline map isolates scoring; `observe` scores only the reading's own asset, bounding detection to the tick it crosses threshold (≤30 ticks given warm-up window). |
+| AC-F02-4 | `classify(metricNames)` maps anomalous metric sets to `failureModeTable`, attached to each `Anomaly.failureMode/confidence`. |
+| AC-F02-5 | `observe` assembles `Anomaly` in exact contract shape; `severityFor` forces `critical` when `vibrationZone === 'D'`. |
+| AC-F02-6 | `isFiniteNumber` validates every metric value before baseline update or scoring; failures increment `rejected.count`, set `rejected.last`, and `updateBaseline` is skipped entirely for that reading. |
 
 ## Security & data classification
-
-- Handles **C2** telemetry and derived anomaly events (per org data-classification table). Raw readings never leave the edge gateway; only anomaly events may be published to cloud over MQTT/mTLS QoS 1.
-- Module is strictly **read-only toward OT**: no exported function writes back to the simulator/device; `observe` only consumes `Reading` objects.
-- Input validation (OWASP IoT I5): reject non-finite values, unknown asset ids, unknown metrics, and out-of-order/replayed `ts` (tracked via `seenKeys`) — all counted in `rejected`, none reach baseline state.
-- No PII: anomalies reference `assetId`/`assetType` only, never operator/technician identity.
+- Handles **C2** telemetry-derived data (raw metrics in, anomaly events out), per the recalled Edge/Cloud residency table. Raw per-reading metrics stay in-process/edge memory only (never persisted beyond the detector's own baseline state); only resulting `Anomaly` events are eligible to leave the OT zone, and only over MQTT/mTLS QoS 1 (handled by a downstream module, not this one).
+- This module performs **no writes or commands toward OT** — it only reads `Reading` objects passed in; `observe` has no side channel back to simulators/devices. Strictly read-only toward OT.
+- **Input validation:** every metric value is checked with `isFiniteNumber` before use; non-finite or non-numeric values cause the whole reading to be rejected and counted, never partially scored, and never folded into `updateBaseline` (prevents baseline poisoning from untrusted telemetry, AC-F02-6).
+- No PII is ever present in `Reading`/`Anomaly` shapes (asset ids only, per org privacy standard).
 
 ## Reused team decisions
-- Baseline must freeze spread after warm-up (Meko architecture decision, risk mitigation for AC-F02-1).
-- Telemetry is untrusted input: reject non-finite values, unknown asset/metric, drop replayed/out-of-order readings (org IoT security standard, OWASP I5).
-- Anomaly events are C2 data, may leave the OT zone only via MQTT/mTLS QoS 1 (security data-classification table).
-- Exports must be exactly `createDetector`, `vibrationZone`, `classify` with contract shapes as specified by lyra/sentinel memories.
+- Baseline freeze-after-warm-up architecture decision (Meko risk note) is implemented via the `frozen` flag in `updateBaseline`.
+- Exact `Anomaly` and function signatures reused verbatim from the recalled F02 contract memory.
+- Data classification/residency table (C2, edge-sourced, MQTT/mTLS egress) reused from the recalled security design memory.
+- F01's `Reading` shape reused unchanged as `observe`'s input type.

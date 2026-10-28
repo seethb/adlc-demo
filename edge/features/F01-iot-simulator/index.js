@@ -1,131 +1,116 @@
+// edge/features/F01-iot-simulator/index.js
+//
 // F01 · IoT telemetry simulator
 //
-// DATA CLASSIFICATION: C2 Confidential. Output of this module is simulated plant
-// telemetry and must be treated exactly like raw OT telemetry — EDGE-RESIDENT ONLY.
-// Callers must not forward Reading[] to cloud services, Claude, or Meko. This
-// module is READ-ONLY TOWARDS OT: it has no actuation API, no setpoint/write path
-// and performs no network or filesystem I/O — it only generates in-memory
-// readings (IEC 62443 zones/conduits; org security-standard "edge analytics is
-// read-only towards OT"). All metrics emitted are validated finite (assertFinite)
-// before leaving this module per the IoT security standard (OWASP IoT I5):
-// telemetry (even simulated) is treated as untrusted input downstream, so we
-// never emit NaN/Infinity and never emit unknown asset ids or metrics.
+// Security & data classification (see org IoT security standard, org security-standard
+// memory, and F01 design doc "Security & data classification"):
+//   - Simulated readings are treated as Class C2 (Confidential) telemetry, identical in
+//     classification to real raw telemetry, and never leave this edge process (no I/O,
+//     no network, no persistence — ADR-001).
+//   - This module is strictly read-only toward OT: it only synthesizes data in memory and
+//     never opens any connection to a gateway, PLC or OT network (IEC 62443 posture).
+//   - Per OWASP IoT I5 (telemetry is untrusted input, applied here even to synthetic data):
+//     `inject`/`clear` validate asset ids and fault applicability before mutating state,
+//     and every emitted metric value is checked to be finite before being returned.
+//   - No operator/technician identifiers are ever included in a Reading (asset id only).
 //
-// No npm dependencies, no I/O, no network, no process.env, no eval — only
-// node: built-ins (none needed here) and the reference fleet definitions.
+// Exports: createSimulator (AC-F01-1..5)
 
 import { FLEET, ASSET_TYPES, FAULTS } from '../../reference/fleet.js';
 
-// --- deterministic PRNG (AC-F01-2: same seed => identical stream) ---
-function mulberry32(seed) {
+/** Deterministic mulberry32 PRNG (AC-F01-2: same seed -> same stream). */
+function makeRng(seed) {
   let a = seed >>> 0;
-  return function rng() {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
+  return function next() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-// Box-Muller gaussian sample, rejection-sampled to stay within clampSigma
-// standard deviations of the mean (AC-F01-3: healthy readings within 4.5σ).
-function gaussian(rng, mean, sigma, clampSigma = 4.5) {
-  for (let attempt = 0; attempt < 64; attempt++) {
-    const u1 = Math.max(rng(), 1e-12);
-    const u2 = rng();
-    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-    if (Math.abs(z) <= clampSigma) return mean + z * sigma;
-  }
-  // Fallback: clamp deterministically if rejection sampling somehow failed.
-  return mean;
+/** Box-Muller transform drawing from the supplied rng. */
+function gaussianRaw(rng) {
+  let u = 0, v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+/** Healthy gaussian sample clamped to +/- 4.5 sigma (AC-F01-3). */
+function gaussianClamped(rng, mu, sigma) {
+  const z = gaussianRaw(rng);
+  const clampedZ = Math.max(-4.5, Math.min(4.5, z));
+  return mu + clampedZ * sigma;
 }
 
 function round3(n) {
   return Math.round(n * 1000) / 1000;
 }
 
-function assertFinite(n, where) {
-  if (typeof n !== 'number' || !Number.isFinite(n)) {
-    throw new TypeError(`non-finite metric value at ${where}`);
-  }
-  return n;
-}
-
-function validateAssetId(assets, assetId) {
+function validateAsset(assets, assetId) {
   const asset = assets.find((a) => a.id === assetId);
-  if (!asset) throw new RangeError(`unknown asset: ${assetId}`);
+  if (!asset) throw new Error(`F01: unknown asset "${assetId}"`);
   return asset;
 }
 
-function validateFault(assetType, fault) {
+function validateFault(asset, fault) {
   const def = FAULTS[fault];
-  if (!def) throw new RangeError(`unknown fault: ${fault}`);
-  if (!def.appliesTo.includes(assetType)) {
-    throw new RangeError(`fault ${fault} does not apply to asset type ${assetType}`);
+  if (!def) throw new Error(`F01: unknown fault "${fault}"`);
+  if (!def.appliesTo.includes(asset.type)) {
+    throw new Error(`F01: fault "${fault}" does not apply to asset type "${asset.type}"`);
   }
   return def;
 }
 
-// Progressively degrade signature metrics with age (ticks since injection).
-// effects: { metric: perTickFraction } — multiplicative fractional drift per
-// tick applied to the nominal mean, then jittered with an amplified sigma.
-function applyFault(rng, nominal, faultDef, age) {
-  const metrics = {};
-  for (const [metric, [mean, sigma]] of Object.entries(nominal)) {
-    const fraction = faultDef.effects?.[metric];
-    const jitterMult = faultDef.jitter?.[metric] ?? 1;
-    let base = mean;
-    if (typeof fraction === 'number') {
-      base = mean * Math.pow(1 + fraction, age);
-    }
-    const value = base + gaussian(rng, 0, sigma * jitterMult, Infinity);
-    metrics[metric] = round3(assertFinite(value, `fault metric ${metric}`));
-  }
-  return metrics;
+/**
+ * Progressive degradation of a single metric under an active fault
+ * (AC-F01-4): monotonic drift scaled by elapsed ticks since injection.
+ */
+function applyFaultDrift(rng, mean, sigma, def, metric, elapsedTicks) {
+  const fraction = def.effects?.[metric];
+  const jitterMult = def.jitter?.[metric] ?? 1;
+  const driftedMean = fraction != null ? mean * (1 + fraction * elapsedTicks) : mean;
+  const noise = gaussianRaw(rng) * sigma * jitterMult;
+  return driftedMean + noise;
 }
 
-function healthyMetrics(rng, nominal) {
-  const metrics = {};
-  for (const [metric, [mean, sigma]] of Object.entries(nominal)) {
-    const value = gaussian(rng, mean, sigma, 4.5);
-    metrics[metric] = round3(assertFinite(value, `nominal metric ${metric}`));
-  }
-  return metrics;
-}
+export function createSimulator(opts = {}) {
+  const { seed, assets: assetsOpt, startTs, stepMs = 1000 } = opts;
+  if (typeof seed !== 'number') throw new Error('F01: createSimulator requires a numeric seed');
 
-export function createSimulator(config = {}) {
-  const {
-    seed = 1,
-    assets = FLEET,
-    startTs = new Date(0).toISOString(),
-    stepMs = 1000,
-  } = config;
-
-  const rng = mulberry32(seed);
-  let clockMs = Date.parse(startTs);
+  const assets = Object.freeze((assetsOpt ?? FLEET).map((a) => ({ ...a })));
+  const rng = makeRng(seed);
+  const clock = { ts: startTs ?? Date.now() };
+  /** Map<assetId, { fault: string, startedTick: number }> */
+  const faults = new Map();
   let tickCount = 0;
 
-  // Map<assetId, { fault, sinceTick }>
-  const faults = new Map();
-
   function tick() {
-    const currentTick = tickCount;
-    const ts = new Date(clockMs).toISOString();
+    tickCount += 1;
+    const ts = new Date(clock.ts).toISOString();
+    clock.ts += stepMs;
+
     const readings = [];
-
     for (const asset of assets) {
-      const typeDef = ASSET_TYPES[asset.type];
-      const entry = faults.get(asset.id);
-      let metrics;
-      let faultLabel = null;
+      const nominal = ASSET_TYPES[asset.type].nominal;
+      const activeFault = faults.get(asset.id);
+      const def = activeFault ? FAULTS[activeFault.fault] : null;
+      const elapsed = activeFault ? tickCount - activeFault.startedTick : 0;
 
-      if (entry) {
-        const faultDef = FAULTS[entry.fault];
-        const age = currentTick - entry.sinceTick;
-        metrics = applyFault(rng, typeDef.nominal, faultDef, age);
-        faultLabel = entry.fault;
-      } else {
-        metrics = healthyMetrics(rng, typeDef.nominal);
+      const metrics = {};
+      for (const [metric, [mean, sigma]] of Object.entries(nominal)) {
+        let value;
+        if (def && def.effects && metric in def.effects) {
+          value = applyFaultDrift(rng, mean, sigma, def, metric, elapsed);
+        } else {
+          value = gaussianClamped(rng, mean, sigma);
+        }
+        if (!Number.isFinite(value)) {
+          throw new Error(`F01: non-finite value generated for ${asset.id}.${metric}`);
+        }
+        metrics[metric] = round3(value);
       }
 
       readings.push({
@@ -133,28 +118,27 @@ export function createSimulator(config = {}) {
         assetId: asset.id,
         type: asset.type,
         metrics,
-        fault: faultLabel,
+        fault: activeFault ? activeFault.fault : null,
       });
     }
-
-    clockMs += stepMs;
-    tickCount += 1;
     return readings;
   }
 
   function inject(assetId, fault) {
-    const asset = validateAssetId(assets, assetId);
-    validateFault(asset.type, fault);
-    faults.set(assetId, { fault, sinceTick: tickCount });
+    const asset = validateAsset(assets, assetId);
+    validateFault(asset, fault);
+    faults.set(assetId, { fault, startedTick: tickCount });
   }
 
   function clear(assetId) {
-    validateAssetId(assets, assetId);
+    validateAsset(assets, assetId);
     faults.delete(assetId);
   }
 
   function activeFaults() {
-    return Array.from(faults.entries()).map(([assetId, { fault }]) => ({ assetId, fault }));
+    const out = {};
+    for (const [assetId, { fault }] of faults.entries()) out[assetId] = fault;
+    return out;
   }
 
   return { tick, inject, clear, activeFaults, assets };

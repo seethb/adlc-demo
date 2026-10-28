@@ -1,53 +1,52 @@
 # F01 · IoT telemetry simulator — Plan
 
 ## Summary
-A seeded, deterministic telemetry simulator for the eight reference fleet assets, emitting one reading per asset per `tick()` with nominal metrics and optional injectable fault progression. It underpins all downstream analytics/maintenance/query features without a physics model or transport layer.
+A seeded, deterministic telemetry simulator for the eight reference fleet assets, emitting one reading per asset per `tick()`, with injectable fault scenarios that progressively degrade signature metrics. Provides the baseline data stream consumed by F02 and downstream features.
 
 ## User stories
-- As a data scientist (TM-04), I want `tick()` to emit one complete reading per asset so I can build detectors against realistic batches. (AC-F01-1)
-- As a QA engineer, I want identical seeds to reproduce identical streams so tests are deterministic. (AC-F01-2)
-- As a reliability engineer, I want healthy readings bounded to 4.5σ so false positives stay low. (AC-F01-3)
-- As a maintenance engineer, I want to inject and clear faults with progressive degradation and labeling so I can validate detection/response workflows. (AC-F01-4)
-- As an integrator, I want invalid asset ids or mismatched faults to throw so errors surface early. (AC-F01-5)
+- As an analytics developer, I want `tick()` to emit a full reading per asset with all nominal metrics so that I can build detection logic against realistic data. (AC-F01-1)
+- As a test author, I want identical streams from the same seed so that I can write deterministic assertions. (AC-F01-2)
+- As a reliability engineer, I want healthy noise bounded to 4.5σ so that false positives stay controlled. (AC-F01-3)
+- As a maintenance engineer, I want to inject and clear faults so that I can validate detection and work-order flows against degrading signatures. (AC-F01-4)
+- As an integrator, I want invalid asset/fault combinations to throw so that bugs surface early. (AC-F01-5)
 
 ## Acceptance criteria traceability
-| AC | Description | Covered by |
+| AC id | Description | Covered by |
 |---|---|---|
-| AC-F01-1 | One reading/asset/tick, all nominal metrics, fault null when healthy | `tick()` |
+| AC-F01-1 | One reading/asset/tick, all nominal metrics, `fault:null` healthy | `tick()` |
 | AC-F01-2 | Same seed → identical stream | seeded RNG in `createSimulator` |
-| AC-F01-3 | Healthy readings within 4.5σ | noise generator bound |
-| AC-F01-4 | Fault injection progressively degrades + labels; `clear` restores | `inject`/`clear` |
-| AC-F01-5 | Unknown asset/fault mismatch throws | input validation in `inject`/`tick` |
+| AC-F01-3 | Healthy readings within 4.5σ | noise generator |
+| AC-F01-4 | Injected fault progressively degrades signature metrics, `clear` restores | `inject`/`clear` |
+| AC-F01-5 | Unknown asset/invalid fault throws | validation in `inject`/`clear` |
 
 ## Contract
-Exports: `createSimulator`.
+Exports: `createSimulator`
 
 ```
 createSimulator({ seed, assets?, startTs?, stepMs? }) => {
   tick(): Reading[],
   inject(assetId, fault): void,
   clear(assetId): void,
-  activeFaults(): { assetId, fault }[],
+  activeFaults(): { [assetId]: string },
   assets: Asset[]
 }
 Reading = { ts: ISO-8601, assetId, type, metrics: { [metric]: number }, fault: string|null }
 ```
-Timestamps ISO-8601 UTC; metrics rounded to 3 decimals per org standard.
 
 ## Dependencies
 None.
 
 ## Non-goals
-No physics model; no MQTT/OPC-UA transport (edge bus out of scope).
+No physics-based modeling. No MQTT/OPC-UA transport; the edge bus is out of scope.
 
 ## Risks
-Noise calibration: too low makes faults trivially detectable, too high causes false positives in healthy readings. σ values owned by reliability team ("nominal operating bands").
+Noise calibration tradeoff: too low makes fault detection trivial, too high creates false positives. σ values owned by the reliability team ("nominal operating bands").
 
 ## Telemetry & evals
-Behavioural eval: 200-tick replay must stay within the 4.5σ band on every metric for healthy assets. No operator/technician names in logs — asset ids and pseudonymous team ids only, per org privacy standard.
+Behavioural eval: 200-tick replay must stay within the 4.5σ band on every metric for healthy assets (AC-F01-3). Fault injection eval verifies progressive degradation and restoration on `clear` (AC-F01-4).
 
 ## Definition of done
-- `edge/features/F01-iot-simulator/index.js` exports `createSimulator` matching the contract shape exactly.
-- All AC-F01-1..5 covered by executable acceptance tests and passing.
-- 200-tick eval replay passes 4.5σ bound check.
-- No PII/operator names in any telemetry, logs, or fixtures.
+- All five ACs covered by passing acceptance tests using `FLEET`/`ASSET_TYPES` from `edge/reference/fleet.js`.
+- `createSimulator` exported from `edge/features/F01-iot-simulator/index.js`.
+- Numeric metrics rounded to 3 decimals; timestamps ISO-8601 UTC, per org standard.
+- No PII/operator names in readings or logs — asset ids only.

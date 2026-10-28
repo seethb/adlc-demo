@@ -1,119 +1,104 @@
-// edge/features/F04-corrective-action/index.js
-//
-// F04 · Corrective Action Reports (CAR) — 8D-style corrective action reports.
-//
-// Pure ES module, no I/O, no network, no npm deps (ADR-002). State lives in the
-// module closure only (edge-resident, C2 Confidential, no cloud sync) — CARs and
-// work orders never leave this process. This module is strictly read-only towards
-// OT: it never writes PLC registers, coils or setpoints; output is advisory only
-// (IoT security standard: edge analytics is read-only towards OT).
-//
-// Work orders are treated as untrusted input per the IoT security standard
-// (OWASP IoT I5): validateWorkOrder rejects malformed records (missing
-// assetId/failureMode, non-finite occurrence counts, unknown priority) before
-// they are grouped or used to open a CAR.
-//
-// CAR fields reference only asset ids and failure-mode ids — never operator or
-// technician names — per the org privacy standard. D4/D7 root-cause and
-// preventive text are drawn from the reliability knowledge base / failure-mode
-// handbook below, never invented inline, per the feature's risk note.
+// F04 · Corrective Action Reports (CAR)
+// Reference: specs/features/F04-corrective-action/{plan,design}.md
+// Org standard: no npm deps, no I/O, no network, no process.env, no eval.
+// Only node: built-ins or '../../reference/fleet.js' may be imported — this module needs neither.
 
-const VALID_PRIORITIES = new Set(['P1', 'P2', 'P3']);
-
-// Minimal reliability knowledge base excerpt — root-cause hypotheses and
-// preventive actions are sourced from here, never invented (per risk note).
-const KB_DEFAULT = {
-  rootCause: 'Suspected wear/degradation consistent with the failure-mode handbook entry; to be confirmed by inspection.',
-  preventive: 'Add or tighten a monitoring/procedure control so this failure mode is caught before it recurs.',
+// Small internal root-cause handbook. Per design doc, root-cause text must come from a
+// handbook, never be invented; unknown failure modes get an explicit "(unconfirmed)" tag.
+const ROOT_CAUSE_HANDBOOK = {
+  'cavitation': 'Insufficient NPSH margin leading to vapor bubble collapse at the impeller.',
+  'bearing-wear': 'Lubrication breakdown or misalignment accelerating bearing wear.',
+  'overheating': 'Reduced cooling flow or fouled heat-transfer surface.',
+  'vibration': 'Mechanical imbalance or coupling misalignment.',
 };
 
-function validateWorkOrder(wo) {
-  if (!wo || typeof wo !== 'object') return false;
-  if (typeof wo.assetId !== 'string' || wo.assetId.length === 0) return false;
-  if (typeof wo.failureMode !== 'string' || wo.failureMode.length === 0) return false;
-  if (typeof wo.id !== 'string' || wo.id.length === 0) return false;
-  if (!VALID_PRIORITIES.has(wo.priority)) return false;
-  if (!Number.isFinite(wo.occurrences)) return false;
-  return true;
+function lookupRootCause(failureMode) {
+  return ROOT_CAUSE_HANDBOOK[failureMode] || `Root cause for '${failureMode}' not yet confirmed (unconfirmed).`;
 }
 
-function groupByAssetFailureMode(workOrders) {
+function keyOf(wo) {
+  return `${wo.assetId}|${wo.failureMode}`;
+}
+
+function isCritical(wo) {
+  return wo.priority === 'P1';
+}
+
+function isRecurrent(group) {
+  return group.length >= 2 || group.some((wo) => (Number.isFinite(wo.occurrences) ? wo.occurrences : 1) >= 3);
+}
+
+function groupByKey(workOrders) {
   const groups = new Map();
   for (const wo of workOrders) {
-    if (!validateWorkOrder(wo)) continue; // reject untrusted/malformed input
-    const key = `${wo.assetId}::${wo.failureMode}`;
-    if (!groups.has(key)) {
-      groups.set(key, { assetId: wo.assetId, failureMode: wo.failureMode, wos: [] });
-    }
-    groups.get(key).wos.push(wo);
+    if (!wo || !wo.assetId || !wo.failureMode || !wo.priority) continue; // AC input validation
+    const key = keyOf(wo);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(wo);
   }
   return groups;
 }
 
-// AC-F04-1 AC-F04-2: decide whether a group of work orders opens a CAR.
-function decideTrigger(group) {
-  if (group.wos.some((w) => w.priority === 'P1')) return 'critical-failure';
-  const hasRepeatOccurrence = group.wos.some((w) => Number.isFinite(w.occurrences) && w.occurrences >= 3);
-  if (group.wos.length >= 2 || hasRepeatOccurrence) return 'recurrence';
-  return null;
-}
-
-// AC-F04-4: build a fully-populated 8D CAR record.
-function buildCar(group, trigger, id) {
-  const woCount = group.wos.length;
-  const maxOccurrences = Math.max(...group.wos.map((w) => w.occurrences));
-  const isCritical = trigger === 'critical-failure';
-
-  const d3_containment = isCritical
-    ? 'Reduce load on the asset or switch to standby equipment immediately.'
-    : 'Increase inspection frequency to every shift until root cause is verified.';
-
-  const d5_corrective = group.wos
-    .flatMap((w) => (Array.isArray(w.tasks) ? w.tasks : []))
-    .filter((t, i, arr) => arr.indexOf(t) === i)
-    .join('; ') || 'Perform the corrective tasks specified on the related work order(s).';
-
-  return {
-    id,
-    assetId: group.assetId,
-    failureMode: group.failureMode,
-    trigger,
-    workOrders: group.wos.map((w) => w.id),
-    status: 'open',
-    d1_team: 'reliability-engineering',
-    d2_problem: `Asset ${group.assetId} failure mode "${group.failureMode}": ${woCount} work order(s), max occurrences ${maxOccurrences}.`,
-    d3_containment,
-    d4_rootCause: KB_DEFAULT.rootCause,
-    d5_corrective,
-    d6_verify: '7 days without recurrence of this failure mode on this asset.',
-    d7_preventive: KB_DEFAULT.preventive,
-  };
-}
-
 export function createCarService() {
-  const cars = [];
-  const index = new Map(); // `${assetId}::${failureMode}` -> CAR id
-  let seq = 0;
+  const cars = new Map(); // CAR-nnn -> CAR
+  const byKey = new Map(); // assetId|failureMode -> CAR-nnn
+  let seq = 1;
+
+  function buildCar(key, group, trigger) {
+    const [assetId, failureMode] = key.split('|');
+    const id = `CAR-${String(seq).padStart(3, '0')}`;
+    seq += 1;
+
+    const woIds = group.map((wo) => wo.id);
+    const totalOccurrences = group.reduce(
+      (sum, wo) => sum + (Number.isFinite(wo.occurrences) ? wo.occurrences : 1),
+      0,
+    );
+    const tasks = [...new Set(group.flatMap((wo) => (Array.isArray(wo.tasks) ? wo.tasks : [])))];
+    const anyCritical = group.some(isCritical);
+
+    const car = {
+      id,
+      assetId,
+      failureMode,
+      trigger,
+      workOrders: woIds,
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      // 8D fields — AC-F04-4: every field must be filled in.
+      d1_team: 'Reliability engineering',
+      d2_problem: `Asset ${assetId} failure mode '${failureMode}' observed across ${group.length} work order(s), ${totalOccurrences} occurrence(s).`,
+      d3_containment: anyCritical
+        ? 'Reduce load or switch to standby equipment immediately.'
+        : 'Increase inspection frequency to every shift.',
+      d4_rootCause: lookupRootCause(failureMode),
+      d5_corrective: tasks.length > 0 ? tasks.join('; ') : 'Apply standard corrective playbook tasks.',
+      d6_verify: 'Verify no recurrence for 7 consecutive days.',
+      d7_preventive: `Add monitoring/procedure change to detect '${failureMode}' on ${assetId} earlier.`,
+      d8_closure: 'Pending verification period before closure.',
+    };
+    return car;
+  }
 
   function evaluate(workOrders) {
-    // AC-F04-1 AC-F04-2 AC-F04-3: validate, group, decide trigger, dedup, open.
-    if (!Array.isArray(workOrders)) return [];
-    const groups = groupByAssetFailureMode(workOrders);
+    const groups = groupByKey(Array.isArray(workOrders) ? workOrders : []);
     const created = [];
 
-    for (const group of groups.values()) {
-      const key = `${group.assetId}::${group.failureMode}`;
-      if (index.has(key)) continue; // AC-F04-3: at most one CAR per asset+failureMode
+    for (const [key, group] of groups) {
+      if (byKey.has(key)) continue; // AC-F04-3: at most one CAR per asset + failure mode
 
-      const trigger = decideTrigger(group);
+      let trigger = null;
+      if (group.some(isCritical)) {
+        trigger = 'critical-failure'; // AC-F04-1
+      } else if (isRecurrent(group)) {
+        trigger = 'recurrence'; // AC-F04-2
+      }
+
       if (!trigger) continue;
 
-      seq += 1;
-      const id = `CAR-${String(seq).padStart(3, '0')}`;
-      const car = buildCar(group, trigger, id);
-
-      cars.push(car);
-      index.set(key, id);
+      const car = buildCar(key, group, trigger);
+      cars.set(car.id, car);
+      byKey.set(key, car.id);
       created.push(car);
     }
 
@@ -121,7 +106,7 @@ export function createCarService() {
   }
 
   function list() {
-    return cars.slice();
+    return [...cars.values()];
   }
 
   return { evaluate, list };

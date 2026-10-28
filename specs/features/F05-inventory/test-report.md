@@ -1,6 +1,6 @@
 # F05 test report
 
-Run f05-mugrhn44 · 2026-09-25T09:32:32.799Z
+Run f05-mvs64ink · 28 Oct 2026, 19:19:04 IST
 
 | | Acceptance criterion | Result |
 |---|---|---|
@@ -10,4 +10,4 @@ Run f05-mugrhn44 · 2026-09-25T09:32:32.799Z
 | ✅ | AC-F05-4 | receiving a requisition restocks and closes it |
 | ✅ | AC-F05-5 | unknown SKUs throw |
 
-**Behavioural eval:** 500 random operations · 0 negative states · 0 duplicate requisitions
+**Behavioural eval:** eval crashed: unknown reservation ref: WO-7

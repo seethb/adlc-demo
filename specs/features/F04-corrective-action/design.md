@@ -1,63 +1,59 @@
 # F04 · Corrective Action Reports (CAR) — Design
 
-## Module structure (`edge/features/F04-corrective-action/index.js`)
+## Module structure
+`edge/features/F04-corrective-action/index.js` exports `createCarService()`.
 
-Internal state (module-closure, in-memory, edge-resident):
-- `cars: CAR[]` — all CARs created so far, append-only.
-- `index: Map<string, string>` — dedup map keyed by `${asset}::${failureMode}` → CAR id (AC-F04-3).
-- `seq: number` — counter for `CAR-nnn` id generation (AC-F04-4).
+Internal state (closure, in-memory, not persisted across process restarts):
+- `cars: Map<string, CAR>` keyed by `CAR-nnn` id.
+- `byKey: Map<string /* assetId|failureMode */, string /* CAR id */>` — enforces AC-F04-3 dedup.
+- `seq: number` — next CAR sequence number.
 
-Functions:
-- `createCarService()` → returns `{ evaluate, list }`.
-- `evaluate(workOrders)` (exported via closure) — `// AC-F04-1 // AC-F04-2 // AC-F04-3`: validates input, groups WOs by asset+failureMode, applies trigger rules, calls `openCar` for new cases only, returns newly created CARs.
-- `list()` — returns a shallow copy of `cars`.
-- `groupByAssetFailureMode(workOrders)` (internal helper) — builds `{ asset, failureMode, wos, occurrences }` groups.
-- `decideTrigger(group)` (internal helper) — `// AC-F04-1 // AC-F04-2`: returns `"critical-failure"` if any WO priority is `P1`; else `"recurrence"` if `wos.length >= 2` or any single WO has `occurrences >= 3`; else `null`.
-- `buildCar(group, trigger)` (internal helper) — `// AC-F04-4`: allocates `CAR-nnn` id, fills D1–D7 from the group and the reliability knowledge base (D4, D7), never invents text.
-- `validateWorkOrder(wo)` (internal helper) — rejects malformed WOs: missing `asset`/`failureMode`, non-finite counts, unknown priority values.
+Internal helpers:
+- `keyOf(wo)` → `` `${wo.assetId}|${wo.failureMode}` ``.
+- `isCritical(wo)` → `wo.priority === 'P1'`.
+- `isRecurrent(group)` → `group.length >= 2 || group.some(wo => wo.occurrences >= 3)`.
+- `groupByKey(workOrders)` → Map of key → WO[].
+- `lookupRootCause(failureMode)` → reads from `edge/reference/car.js` (failure-mode handbook); returns handbook text or a placeholder string tagged `(unconfirmed)` if no entry — never fabricated prose.
+- `buildCar(key, group, trigger)` → assembles the 8D fields (D1–D8) per the reference procedure and mints `CAR-${String(seq).padStart(3,'0')}`.
+- `evaluate(workOrders)` → groups WOs, determines trigger per key (critical takes precedence), skips keys already in `byKey`, creates CARs for the rest, registers them, returns only the newly created ones.
+- `list()` → `[...cars.values()]`.
 
-## Contract signatures
-
-```js
+## Contract
+```
 createCarService() → {
-  evaluate(workOrders: WorkOrder[]): CAR[],  // newly created CARs only
+  evaluate(workOrders: WO[]): CAR[],   // newly created only, per AC-F04-3
   list(): CAR[]
 }
 
-WorkOrder (from F03) = {
-  id: string, asset: string, failureMode: string,
-  priority: "P1"|"P2"|"P3", occurrences: number, status: string, ...
-}
-
 CAR = {
-  id: "CAR-nnn",
-  asset: string,
-  failureMode: string,
-  trigger: "critical-failure" | "recurrence",
-  d1: string, // team: reliability engineering
-  d2: string, // problem: asset, failure mode, WO/occurrence count
-  d3: string, // containment
-  d4: string, // root-cause hypothesis, from KB
-  d5: string, // corrective actions, from WO playbook
-  d6: string, // verify (7 days no recurrence)
-  d7: string  // preventive action
+  id: 'CAR-001',
+  assetId, failureMode,
+  trigger: 'critical-failure' | 'recurrence',
+  woIds: string[],
+  createdAt: ISOString,
+  d1_team, d2_problem, d3_containment, d4_rootCause,
+  d5_correctiveActions, d6_verify, d7_preventive, d8_closure
 }
 ```
+`evaluate` is pure with respect to already-seen keys: idempotent on repeated/overlapping input.
 
 ## AC → design mapping
-
-| AC id | Design element |
+| AC | Design mechanism |
 |---|---|
-| AC-F04-1 | `decideTrigger` returns `"critical-failure"` when any WO in group has `priority === "P1"`; `evaluate` opens a CAR for it |
-| AC-F04-2 | `decideTrigger` recurrence branch: `wos.length >= 2` or any `occurrences >= 3`; single P2 with no repeat yields `null`, no CAR |
-| AC-F04-3 | `index` map keyed by `asset::failureMode` checked before `openCar`; re-running `evaluate` on same input creates no duplicates (idempotent) |
-| AC-F04-4 | `buildCar` allocates sequential `CAR-nnn` via `seq`, and populates d1..d7 all non-empty before pushing to `cars` |
+| AC-F04-1 | `isCritical` flags any WO with `priority==='P1'`; such a key always yields trigger `critical-failure`, checked before recurrence logic. |
+| AC-F04-2 | `isRecurrent` requires group length ≥2 or any WO `occurrences>=3`; else no CAR opens for that key (e.g. single P2 WO). |
+| AC-F04-3 | `byKey` map keyed by `assetId|failureMode`; `evaluate` skips keys already present, guaranteeing at most one CAR per key, ever. |
+| AC-F04-4 | `buildCar` always sets id via zero-padded `seq` (`CAR-nnn`) and fills D1–D8 from WO fields + handbook lookup; no field left blank. |
 
 ## Security & data classification
-CARs and work orders are **C2 Confidential** (production capacity/process-weakness data). They live edge-resident only, in module memory — no cloud sync, no OT write path. Per org privacy standard, CARs reference **asset ids and failure-mode ids only**, never operator/technician names — d1 "team" is a role label, not a person. All inputs (`workOrders`) are treated as untrusted per IoT security standard: `validateWorkOrder` rejects non-finite `occurrences`, unknown priority values, and missing asset/failureMode before grouping. Module is strictly read-only towards OT: `evaluate`/`list` never write PLC registers, coils or setpoints; CAR output is advisory only. D4/D7 text must be sourced from the reliability knowledge base/failure-mode handbook, never generated inline, per the feature's risk note.
+- CAR data (asset id, failure mode, WO ids, root-cause text) is **C2 Confidential** per org classification — reveals process/plant weaknesses, same class as work orders and anomalies.
+- Data lives only on the edge node in process memory; no cloud sync, no external write inside this module. Any later sync is out of scope and must go through the plant's approved C2 transport path.
+- The module is strictly **read-only toward OT**: it only reads WO objects passed by the caller (sourced from F03); it never writes to OT systems or issues work orders itself.
+- Input validation: `evaluate` ignores WO entries missing `assetId`, `failureMode`, or `priority`; unknown `priority` values are treated as non-critical; `occurrences` defaults to 1 if absent/non-numeric.
+- Per org privacy standard, CARs carry asset ids only — never operator/technician names.
 
 ## Reused team decisions
-- CAR shape and field set reused verbatim from `adlc:atlas · F04/plan`.
-- F03's `createWorkOrderService` output shape (`adlc:atlas · F03/plan`) is the sole input contract for `evaluate`.
-- Data classification (C2 confidential for CARs/work orders) and read-only-towards-OT stance reused from the org IoT security standard and F01's precedent (`adlc:orion`).
-- Pseudonymous-id-only privacy rule applied to all CAR fields per org privacy standard.
+- AC-F04-4's `CAR-nnn` id format and mandatory full 8D fields, as recorded by nova/sentinel/atlas.
+- Org privacy standard: reference people by pseudonymous id/role; CARs carry asset ids, never operator names.
+- F03 WO shape (`assetId`, `failureMode`, `priority`, `occurrences`, `id`, `tasks`) consumed as-is; no anomaly/inventory access, per the plan's stated dependency boundary.
+- Data classification table (C2 for CARs/work orders) from the security design doc.

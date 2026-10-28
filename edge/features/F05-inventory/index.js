@@ -3,6 +3,9 @@
 // CR-001: long-lead parts (leadTimeDays >= 14) are critical spares — they reorder
 // one unit early (available <= reorderPoint + 1) and requisitions carry
 // priority/etaDays/reason. See specs/changes/CR-001-f05-expedite-long-lead/design.md.
+// CR-003: list() gains an additive `alert` field and a new alerts() export for
+// spare parts whose available count drops below 2. AC-CR003-1, AC-CR003-2.
+// See specs/changes/CR-003-f05-create-a-alert-for-spare-parts-below-2-i/design.md.
 
 function isPositiveInt(n) {
   return Number.isFinite(n) && Number.isInteger(n) && n > 0;
@@ -128,6 +131,8 @@ export function createInventory(parts = []) {
 
   // AC-CR001-4: list() surfaces part-master fields for the edge UI, with `low`
   // computed from the same threshold used to trigger requisitions (AC-CR001-1).
+  // AC-CR003-1: `alert` is an additive, independently-computed field: true when
+  // available count drops below 2, regardless of reorderPoint-based `low`.
   function list() {
     return [...stock.entries()].map(([sku, s]) => {
       const avail = s.onHand - s.reserved;
@@ -140,12 +145,28 @@ export function createInventory(parts = []) {
         reorderPoint: s.reorderPoint,
         leadTimeDays: s.leadTimeDays,
         low: avail <= threshold(s),
+        alert: avail < 2,
       };
     });
   }
 
   function lowStock() {
     return list().filter((i) => i.low);
+  }
+
+  // AC-CR003-1: alerts() re-derives live from list() on every call — no
+  // caching, so it always reflects current onHand/reserved state after any
+  // reserve/release/consume/receive call.
+  function alerts() {
+    return list()
+      .filter((i) => i.alert)
+      .map(({ sku, name, available, reorderPoint, leadTimeDays }) => ({
+        sku,
+        name,
+        available,
+        reorderPoint,
+        leadTimeDays,
+      }));
   }
 
   function requisitions() {
@@ -170,6 +191,7 @@ export function createInventory(parts = []) {
     available,
     list,
     lowStock,
+    alerts,
     requisitions,
     reservations,
   };

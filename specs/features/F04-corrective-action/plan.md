@@ -1,37 +1,48 @@
 # F04 · Corrective Action Reports (CAR) — Plan
 
 ## Summary
-`createCarService()` evaluates work orders from F03 and automatically opens 8D-style CARs for critical (P1) or recurring failures, at most one per asset + failure mode, so reliability engineering gets consistent root-cause tracking without manual triage.
+CAR service inspects F03 work orders and automatically opens 8D-style Corrective Action Reports for critical failures and recurring failure modes, de-duplicated per asset + failure mode.
 
 ## User stories
-- As a reliability engineer, I want any P1 work order to open a CAR immediately, so that critical failures are root-caused without delay. (AC-F04-1)
-- As a reliability engineer, I want recurring failures on the same asset + failure mode to open a CAR automatically, so that patterns aren't missed. (AC-F04-2)
-- As a reliability engineer, I want only one active CAR per asset + failure mode, so that I don't triage duplicate reports. (AC-F04-3)
-- As a reliability engineer, I want each CAR to have a stable id and all 8D fields pre-filled, so that I can act on it without re-gathering context. (AC-F04-4)
+- As a reliability engineer, I want any P1 work order to immediately open a CAR, so that critical failures get root-caused without manual triage. (AC-F04-1)
+- As a reliability engineer, I want recurring failure modes (≥2 WOs, or one WO seen ≥3 times) on the same asset to open a CAR, so that chronic issues surface even without a single critical event. (AC-F04-2)
+- As a reliability engineer, I want only one CAR per asset + failure mode, so that I'm not flooded with duplicate reports. (AC-F04-3)
+- As a reliability engineer, I want each CAR pre-filled with all 8D fields and a stable `CAR-nnn` id, so that I can act on it immediately and reference it consistently. (AC-F04-4)
 
 ## Acceptance criteria traceability
-| AC id | Description | Covered by |
+| AC id | Story | Verified by |
 |---|---|---|
-| AC-F04-1 | P1 WO → CAR trigger `critical-failure` | `evaluate()` critical-failure rule |
-| AC-F04-2 | ≥2 WOs, or 1 WO ×≥3 occurrences, same asset+failure mode → trigger `recurrence`; single P2 does not | `evaluate()` recurrence rule |
-| AC-F04-3 | ≤1 CAR per asset+failure mode | dedup key check before create |
-| AC-F04-4 | CAR id `CAR-nnn`, all 8D fields filled | CAR factory / id sequencer |
+| AC-F04-1 | critical-failure trigger | P1 WO → CAR with trigger `critical-failure` |
+| AC-F04-2 | recurrence trigger | ≥2 WOs or 1 WO occurrences≥3 same asset+failure mode → trigger `recurrence`; single P2 → no CAR |
+| AC-F04-3 | dedup | second evaluate() call for same asset+failure mode yields no new CAR |
+| AC-F04-4 | CAR shape | id matches `CAR-nnn`, D1–D7 fields all non-empty |
 
-## Contract
-`createCarService()` → `{ evaluate(workOrders): CAR[] /* newly created */, list(): CAR[] }`.
-CAR shape: `{ id: "CAR-nnn", asset, failureMode, trigger: "critical-failure"|"recurrence", d1..d7 }`, all D1–D7 fields non-empty. No operator/technician names anywhere — only pseudonymous ids and asset ids, per org PII standard.
+## Contract (exports: createCarService)
+`createCarService()` → `{ evaluate(workOrders): CAR[] /* newly created */, list(): CAR[] }`
+
+```
+CAR = { id: 'CAR-001', assetId, failureMode, trigger: 'critical-failure'|'recurrence',
+        woIds[], createdAt,
+        d1_team, d2_problem, d3_containment, d4_rootCause,
+        d5_correctiveActions, d6_verify, d7_preventive, d8_closure }
+```
+`evaluate` is idempotent: re-running with the same/overlapping work orders returns only newly created CARs (AC-F04-3).
 
 ## Dependencies
-F03 (work orders, priorities, failure modes) is the sole input source.
+F03 (`createWorkOrderService`) — CARs are derived solely from WO objects (`assetId`, `failureMode`, `priority`, `occurrences`, `id`, `tasks`); no direct anomaly or inventory access.
 
 ## Non-goals
 CAR approval workflow; supplier CARs.
 
 ## Risks
-Root-cause (D4) and preventive (D7) text must be sourced from the reliability knowledge base / failure-mode handbook, never invented by the model. Recurrence counting logic must correctly distinguish "≥2 WOs" vs "1 WO ×≥3 occurrences" to avoid false positives (e.g. a single P2).
+D4 root-cause text must be sourced from the reliability failure-mode handbook/knowledge base, never invented; if no matching entry exists, use a clearly marked placeholder rather than fabricated text.
 
 ## Telemetry & evals
-Behavioural eval: replay with one critical and one recurring fault must open exactly two CARs, each with correct trigger and all 8D fields non-empty. All timestamps ISO-8601 UTC.
+Behavioural eval: replay containing one critical (P1) WO and one recurring failure mode (per AC-F04-2 thresholds) must open exactly two CARs, each with correct trigger and no duplicates.
 
 ## Definition of done
-All four ACs pass under QA's immutable acceptance tests; `evaluate()` is idempotent (re-running on same WOs doesn't create duplicate CARs, satisfying AC-F04-3); every function implementing an AC carries a `// AC-F04-n` comment; no PII/operator names present in CAR output.
+- `createCarService` implemented at edge/features/F04-corrective-action/index.js exporting exactly this contract.
+- AC-F04-1..4 covered by automated acceptance tests with exact field/method names.
+- Privacy standard respected: CARs reference asset ids only, never operator/technician names.
+- Behavioural eval in Telemetry section passes.
+- Design doc (design.md) reflects this plan; no undocumented deviations.

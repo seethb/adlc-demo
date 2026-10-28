@@ -1,174 +1,129 @@
 // F05 · Spare-parts inventory tracking
-// Pure ES module, no I/O, no deps. See specs/features/F05-inventory/design.md.
-// CR-001: long-lead parts (leadTimeDays >= 14) are critical spares — they reorder
-// one unit early (available <= reorderPoint + 1) and requisitions carry
-// priority/etaDays/reason. See specs/changes/CR-001-f05-expedite-long-lead/design.md.
-// CR-002: list()/lowStock() items carry `criticalAlert` = available < 5.
-// CR-003: list()/lowStock() items carry `severeAlert` = available < 2.
-// CR-004 (AC-CR004-1/AC-CR004-2): list()/lowStock() items carry `lowStockAlert` =
-// available < 10, computed by the stateless helper computeAlertTiers(avail).
-// See specs/changes/CR-004-f05-prepare-a-notification-for-any-spare-par/design.md.
-
-function isPositiveInt(n) {
-  return Number.isFinite(n) && Number.isInteger(n) && n > 0;
-}
-
-// CR-004: pure helper deriving all alert tiers from available qty. No mutation.
-function computeAlertTiers(avail) {
-  return {
-    lowStockAlert: avail < 10,
-    criticalAlert: avail < 5,
-    severeAlert: avail < 2,
-  };
-}
+// Pure in-memory ES module — no I/O, no network, no process.env, no eval.
+// Edge analytics is read-only toward OT (IEC 62443 zones/conduits): this module
+// never writes to PLCs/controllers; it only reflects WO-driven consumption
+// supplied by the caller (org security-standard).
+// Telemetry/inputs are treated as untrusted: qty must be a finite positive
+// number and sku/ref/reqId must be known, otherwise we throw (IoT security
+// standard — reject non-finite / unknown identifiers).
 
 export function createInventory(parts = []) {
-  const stock = new Map(); // sku -> { onHand, reserved, reorderPoint, reorderQty, leadTimeDays, name }
+  const stock = new Map(); // sku -> { onHand, reserved, reorderPoint, reorderQty }
   const reservationsMap = new Map(); // ref -> { sku, qty }
-  const requisitionsMap = new Map(); // id -> { id, sku, qty, status, priority, etaDays, reason }
-  let reqCounter = 0;
+  const requisitionsMap = new Map(); // id -> { sku, qty, status }
+  let reqSeq = 1;
 
   for (const p of parts) {
     stock.set(p.sku, {
-      name: p.name ?? p.sku,
-      onHand: p.onHand ?? 0,
+      onHand: p.onHand,
       reserved: 0,
-      reorderPoint: p.reorderPoint ?? 0,
-      // AC-F05-3/4: fallback reorderQty; if reorderPoint is 0 (and no reorderQty given)
-      // maybeRequisition still floors the request qty at 1, so a qty=0 requisition
-      // can never be created even with this fallback.
-      reorderQty: p.reorderQty ?? Math.max(1, p.reorderPoint ?? 1),
-      leadTimeDays: p.leadTimeDays ?? 0,
+      reorderPoint: p.reorderPoint,
+      reorderQty: p.reorderQty,
     });
   }
 
+  // AC-F05-5: unknown SKUs throw
   function assertKnownSku(sku) {
-    if (!stock.has(sku)) throw new Error('unknown sku: ' + sku);
+    if (!stock.has(sku)) throw new Error(`unknown SKU: ${sku}`);
   }
 
-  function available(sku) {
-    assertKnownSku(sku);
+  function assertFinitePositive(n, label) {
+    if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) {
+      throw new Error(`invalid ${label}: ${n}`);
+    }
+  }
+
+  function availableQty(sku) {
     const s = stock.get(sku);
     return s.onHand - s.reserved;
   }
 
-  // AC-CR001-1: long-lead parts (leadTimeDays >= 14) are critical spares.
-  function isLongLead(s) {
-    return s.leadTimeDays >= 14;
-  }
-
-  // AC-CR001-1/AC-CR001-4: shared threshold used both for reorder trigger and `low`.
-  function threshold(s) {
-    return s.reorderPoint + (isLongLead(s) ? 1 : 0);
-  }
-
+  // AC-F05-3: exactly one open requisition per SKU once available <= reorder point
   function maybeRequisition(sku) {
     const s = stock.get(sku);
-    const avail = s.onHand - s.reserved;
-    if (avail <= threshold(s)) {
-      const hasOpen = [...requisitionsMap.values()].some(
-        (r) => r.sku === sku && r.status === 'open'
-      );
-      if (!hasOpen) {
-        const qty = Math.max(s.reorderPoint - avail, s.reorderQty, 1);
-        const id = 'REQ-' + ++reqCounter;
-        const longLead = isLongLead(s);
-        requisitionsMap.set(id, {
-          id,
-          sku,
-          qty,
-          status: 'open',
-          // AC-CR001-2: priority/etaDays/reason vary by lead-time class.
-          priority: longLead ? 'expedite' : 'normal',
-          etaDays: longLead ? Math.ceil(s.leadTimeDays / 2) : s.leadTimeDays,
-          reason: longLead ? 'critical-spare-early-reorder' : 'reorder-point',
-        });
-      }
+    if (availableQty(sku) > s.reorderPoint) return;
+    for (const req of requisitionsMap.values()) {
+      if (req.sku === sku && req.status === 'open') return; // already open
     }
+    const id = `REQ-${reqSeq++}`;
+    requisitionsMap.set(id, { id, sku, qty: s.reorderQty, status: 'open' });
+  }
+
+  function closeRequisition(reqId, status) {
+    const req = requisitionsMap.get(reqId);
+    if (!req) throw new Error(`unknown requisition: ${reqId}`);
+    req.status = status;
   }
 
   function reserve(sku, qty, ref) {
     assertKnownSku(sku);
-    if (!isPositiveInt(qty)) {
-      throw new Error('invalid qty: ' + qty);
-    }
-    if (typeof ref !== 'string' || ref.length === 0) {
-      throw new Error('invalid ref: ' + ref);
-    }
-    // AC-F05-1: reservation ref must be a stable, unique identity. If the same
-    // ref is reused while still open, release the prior reservation's stock
-    // first to avoid leaking reserved quantity on the old sku.
-    if (reservationsMap.has(ref)) {
-      release(ref);
-    }
+    assertFinitePositive(qty, 'qty');
     const s = stock.get(sku);
-    const avail = s.onHand - s.reserved;
-    const shortfall = Math.max(0, qty - avail);
-    const granted = qty - shortfall;
-    s.reserved += granted;
-    reservationsMap.set(ref, { sku, qty: granted });
+    const avail = availableQty(sku);
+    const reserved = Math.min(qty, avail);
+    const shortfall = qty - reserved;
+    if (reserved > 0) {
+      s.reserved += reserved;
+      const existing = reservationsMap.get(ref);
+      if (existing) {
+        if (existing.sku !== sku) throw new Error(`ref already used for another SKU: ${ref}`);
+        existing.qty += reserved;
+      } else {
+        reservationsMap.set(ref, { sku, qty: reserved });
+      }
+    }
+    // AC-F05-1: never drive availability negative; report shortfall
     maybeRequisition(sku);
-    return { ok: shortfall === 0, reserved: granted, shortfall };
+    return { ok: shortfall === 0, reserved, shortfall };
   }
 
+  // AC-F05-2: release returns stock
   function release(ref) {
     const r = reservationsMap.get(ref);
-    if (!r) return;
+    if (!r) throw new Error(`unknown reservation ref: ${ref}`);
     const s = stock.get(r.sku);
-    if (s) s.reserved -= r.qty;
+    s.reserved -= r.qty;
     reservationsMap.delete(ref);
   }
 
+  // AC-F05-2: consume reduces on-hand and clears the reservation
   function consume(ref) {
     const r = reservationsMap.get(ref);
-    if (!r) return;
+    if (!r) throw new Error(`unknown reservation ref: ${ref}`);
     const s = stock.get(r.sku);
-    if (s) {
-      s.onHand -= r.qty;
-      s.reserved -= r.qty;
-    }
+    s.onHand -= r.qty;
+    s.reserved -= r.qty;
     reservationsMap.delete(ref);
-    if (s) maybeRequisition(r.sku);
+    maybeRequisition(r.sku);
   }
 
+  // AC-F05-4: receiving a requisition restocks by its quantity and closes it
   function receive(reqId) {
     const req = requisitionsMap.get(reqId);
-    if (!req || req.status !== 'open') return false;
+    if (!req) throw new Error(`unknown requisition: ${reqId}`);
+    if (req.status !== 'open') return false;
     const s = stock.get(req.sku);
-    if (s) s.onHand += req.qty;
-    req.status = 'received';
+    s.onHand += req.qty;
+    closeRequisition(reqId, 'received');
     return true;
   }
 
-  // AC-CR001-4: list() surfaces part-master fields for the edge UI, with `low`
-  // computed from the same threshold used to trigger requisitions (AC-CR001-1).
-  // AC-CR004-1: also surfaces lowStockAlert (available < 10) alongside the
-  // existing criticalAlert (CR-002, <5) and severeAlert (CR-003, <2) tiers,
-  // all derived statelessly via computeAlertTiers.
+  function available(sku) {
+    assertKnownSku(sku);
+    return availableQty(sku);
+  }
+
   function list() {
-    return [...stock.entries()].map(([sku, s]) => {
-      const avail = s.onHand - s.reserved;
-      const tiers = computeAlertTiers(avail);
-      return {
-        sku,
-        name: s.name,
-        onHand: s.onHand,
-        reserved: s.reserved,
-        available: avail,
-        reorderPoint: s.reorderPoint,
-        leadTimeDays: s.leadTimeDays,
-        low: avail <= threshold(s),
-        lowStockAlert: tiers.lowStockAlert,
-        criticalAlert: tiers.criticalAlert,
-        severeAlert: tiers.severeAlert,
-      };
-    });
+    return [...stock.entries()].map(([sku, s]) => ({
+      sku,
+      onHand: s.onHand,
+      reserved: s.reserved,
+      available: s.onHand - s.reserved,
+    }));
   }
 
   function lowStock() {
-    return list().filter(
-      (i) => i.low || i.lowStockAlert || i.criticalAlert || i.severeAlert
-    );
+    return list().filter((i) => i.available <= stock.get(i.sku).reorderPoint);
   }
 
   function requisitions() {
@@ -176,13 +131,7 @@ export function createInventory(parts = []) {
   }
 
   function reservations() {
-    return [...reservationsMap.entries()].map(([ref, r]) => ({ ref, ...r }));
-  }
-
-  // AC-CR001-3: parts already at/below their threshold get an open requisition
-  // immediately on creation, before any reserve/consume call.
-  for (const sku of stock.keys()) {
-    maybeRequisition(sku);
+    return [...reservationsMap.entries()].map(([ref, r]) => ({ ref, sku: r.sku, qty: r.qty }));
   }
 
   return {
